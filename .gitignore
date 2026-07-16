@@ -1,0 +1,25 @@
+# Visual Studio 임시·캐시 파일
+.vs/
+**/.vs/
+*.ipch
+*.suo
+*.VC.db
+*.VC.VC.opendb
+
+# 빌드 결과
+Debug/
+x64/
+build/
+
+# Python 임시 파일
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 로그 및 임시 파일
+*.log
+
+# Large packaged viewer binaries
+DogFightViewer-Windows.ucas
+DogFightViewer-Win64-Shipping.exe
