@@ -23,6 +23,5 @@ venv/
 DogFightViewer-Windows.ucas
 DogFightViewer-Win64-Shipping.exe
 
-# Original packaged viewer directory
-00_Original/AIP_LIB/**/DogFightViewer/
+# Original
 /00_Original/
