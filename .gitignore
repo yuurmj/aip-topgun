@@ -1,6 +1,5 @@
 # Visual Studio 임시·캐시 파일
 .vs/
-**/.vs/
 *.ipch
 *.suo
 *.VC.db
@@ -23,3 +22,6 @@ venv/
 # Large packaged viewer binaries
 DogFightViewer-Windows.ucas
 DogFightViewer-Win64-Shipping.exe
+
+# Original packaged viewer directory
+00_Original/AIP_LIB/**/DogFightViewer/
