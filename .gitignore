@@ -25,3 +25,4 @@ DogFightViewer-Win64-Shipping.exe
 
 # Original packaged viewer directory
 00_Original/AIP_LIB/**/DogFightViewer/
+/00_Original/
