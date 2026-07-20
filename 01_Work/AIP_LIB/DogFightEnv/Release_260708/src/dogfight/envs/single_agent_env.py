@@ -1051,12 +1051,58 @@ class DogFightEnv(gym.Env):
                 )
 
     def _write_log_summary(self, path: str) -> None:
+        ownship_health = self.info.get("ownship_health", None)
+        target_health = self.info.get("target_health", None)
+        outcome = self.info.get("outcome", "")
+
+        ep_wez_steps = int(self.info.get("ep_wez_steps", 0))
+        min_distance = self.info.get("ep_min_distance", None)
+        mean_distance = self.info.get("ep_mean_distance", None)
+
+        damage_dealt_percent = (
+            None
+            if target_health is None
+            else min(
+                100.0,
+                max(0.0, 1.0 - float(target_health)) * 100.0,
+            )
+        )
+
+        damage_received_percent = (
+            None
+            if ownship_health is None
+            else min(
+                100.0,
+                max(0.0, 1.0 - float(ownship_health)) * 100.0,
+            )
+        )
+
         summary = {
             "end_condition": self.info.get("end_condition", ""),
-            "outcome": self.info.get("outcome", ""),
-            "ownship_health": self.info.get("ownship_health", None),
-            "target_health": self.info.get("target_health", None),
+            "outcome": outcome,
+
+            "ownship_health": ownship_health,
+            "target_health": target_health,
+
+            "damage_dealt_percent": damage_dealt_percent,
+            "damage_received_percent": damage_received_percent,
+
+            "ep_min_distance_m": (
+                None if min_distance is None else float(min_distance)
+            ),
+            "ep_mean_distance_m": (
+                None if mean_distance is None else float(mean_distance)
+            ),
+
+            "ep_wez_steps": ep_wez_steps,
+            "wez_entered": ep_wez_steps > 0,
+
+            "crashed": outcome == "crash",
+            "episode_steps": self.info.get("ep_step_count", None),
+            "final_ata_deg": self.info.get("final_ata_deg", None),
+            "final_aa_deg": self.info.get("final_aa_deg", None),
         }
+
         with open(path, "w", encoding="utf-8") as file:
             json.dump(summary, file, indent=2, ensure_ascii=False)
 
