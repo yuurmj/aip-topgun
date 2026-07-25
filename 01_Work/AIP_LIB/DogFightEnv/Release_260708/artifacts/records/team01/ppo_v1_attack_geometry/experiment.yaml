@@ -1,0 +1,177 @@
+# PPO v1: attack geometry shaping
+#
+# 현재 실험 목표:
+#   1. tactical16 관측값은 그대로 사용
+#   2. 고정 표적을 대상으로 먼저 학습
+#   3. 기수 정렬
+#   4. 상대 후방 위치 확보
+#   5. 공격 거리 형성
+#   6. 실제 WEZ 진입
+#   7. 시간 초과 행동 방지
+
+name: ppo_v1_attack_geometry
+script: train_rllib
+
+# ============================================================
+# 1. 결과 저장 이름
+# ============================================================
+
+output:
+  name: team01
+  tag: ppo_v1_attack_geometry
+
+# ============================================================
+# 2. 교전 환경
+# ============================================================
+
+env:
+  # 현재 tactical16 안에 ATA, AA, 상대 위치, WEZ 정보가 있으므로
+  # 관측값은 수정하지 않는다.
+  observation_mode: tactical16
+
+  # 첫 번째 실험은 움직임이 단순한 고정 표적을 사용한다.
+  target_mode: fixed
+
+  # fixed 모드에서는 실제로 사용되지 않을 수 있지만
+  # 기본 설정과의 호환성을 위해 유지한다.
+  target_behavior_dll: AIP_BASE_target.dll
+
+  # student/my_reward.py의 사용자 정의 보상을 사용한다.
+  reward_module: student.my_reward
+
+  # 한 교전의 최대 시뮬레이션 시간
+  max_engage_time: 120.0
+
+  # step_ratio=6이고 시뮬레이터가 60Hz이므로
+  # RL 정책은 초당 약 10회 행동한다.
+  #
+  # 120초 × 10 step = 약 1200 step
+  episode_step_limit: 1200
+
+# ============================================================
+# 3. 환경 세부 설정
+# ============================================================
+#
+# 여기에 reward 블록을 따로 작성하지 않는다.
+#
+# reward_module을 사용하면 student/my_reward.py의
+# MY_REWARD_CONFIG가 보상 설정으로 전달된다.
+
+env_config:
+  step_ratio: 6
+
+# ============================================================
+# 4. PPO 알고리즘 및 신경망
+# ============================================================
+
+algo:
+  name: ppo
+  framework: torch
+
+  # 학습률
+  lr: 3.0e-4
+
+  # 미래 보상 할인율
+  gamma: 0.99
+
+  # PPO 한 iteration에서 수집하는 전체 데이터 수
+  train_batch_size: 4096
+
+  # 전체 데이터에서 한 번에 학습하는 minibatch 크기
+  minibatch_size: 256
+
+  # Generalized Advantage Estimation
+  gae_lambda: 0.95
+
+  # PPO policy clipping 범위
+  clip_param: 0.2
+
+  # 첫 실험은 LSTM이 아니라 MLP를 사용한다.
+  # 보상 문제와 기억 문제를 분리해서 확인하기 위함이다.
+  mlp:
+    enabled: true
+
+    fcnet_hiddens:
+      - 256
+      - 256
+
+    fcnet_activation: relu
+
+    head_fcnet_hiddens: []
+
+    head_fcnet_activation: relu
+
+    vf_share_layers: true
+
+# ============================================================
+# 5. 학습 실행 설정
+# ============================================================
+
+runtime:
+  # 기존 50회보다 늘려 공격 기하를 충분히 학습시킨다.
+  iterations: 300
+
+  num_env_runners: 1
+
+  num_envs_per_env_runner: 1
+
+  rollout_fragment_length: auto
+
+  batch_mode: truncate_episodes
+
+  # 추론에 사용할 lightweight bundle 저장
+  save_lightweight_bundle: true
+
+  # 25 iteration마다 bundle 저장
+  lightweight_bundle_frequency: 25
+
+  # 전체 RLlib checkpoint도 저장
+  save_native_checkpoint: true
+
+  # 25 iteration마다 checkpoint 저장
+  native_checkpoint_frequency: 25
+
+# ============================================================
+# 6. 대시보드 로그
+# ============================================================
+
+dashboard:
+  enabled: true
+  logdir: artifacts/dashboard
+
+# ============================================================
+# 7. 정책 출력 변화 확인
+# ============================================================
+
+policy_probe:
+  enabled: true
+
+  # 10 iteration마다 확인
+  interval: 10
+
+  steps: 4
+
+  print: true
+
+# ============================================================
+# 8. 실제 교전 로그
+# ============================================================
+
+engagement_log:
+  enabled: true
+
+  # 10 iteration마다 평가 교전 실행
+  interval: 10
+
+  # 한 평가 교전의 최대 스텝
+  steps: 1200
+
+  # 평가 시 3경기를 실행
+  episodes: 3
+
+  print: true
+
+notes: >-
+  PPO MLP v1. Fixed-target attack-geometry shaping with explicit timeout
+  penalty, broad pursuit signal, rear-aspect reward, soft WEZ reward, and
+  close-pass penalty.
