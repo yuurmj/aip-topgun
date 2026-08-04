@@ -18,9 +18,8 @@ MY_REWARD_CONFIG = {
     # ============================================================
     # v3 training_record 호환용 설정
     # ============================================================
-    # describe_reward()가 아래 키들을 요구하므로 삭제하면 안 됨
     "survival_bonus": 0.0,
-    "damage_scale": 20.0,
+    "damage_scale": 30.0,
     "pursuit_half_angle_deg": 60.0,
 
     # ============================================================
@@ -31,26 +30,32 @@ MY_REWARD_CONFIG = {
     # ============================================================
     # 상대 추적 보상
     # ============================================================
-    "pursuit_scale": 0.03,
+    # v4: 0.03 → v5: 0.08
+    "pursuit_scale": 0.08,
     "pursuit_angle_deg": 60.0,
-    "pursuit_range_m": 3000.0,
+
+    # v4: 3000m → v5: 6000m
+    "pursuit_range_m": 6000.0,
 
     # ============================================================
     # 공격 위치 보상
     # ============================================================
-    # 2000ft = 약 609.6m
-    # 2500ft = 약 762.0m
-    # 3000ft = 약 914.4m
+    # 약 1,640~3,018ft 거리에서 ATA 15도 이내
     "attack_min_range_m": 500.0,
     "attack_max_range_m": 920.0,
     "attack_ata_deg": 15.0,
-    "attack_position_bonus": 0.03,
+
+    # v4: 0.03 → v5: 0.10
+    "attack_position_bonus": 0.10,
 
     # ============================================================
-    # WEZ 및 피해량 보상
+    # WEZ 및 피해 보상
     # ============================================================
-    "wez_hold_bonus": 0.05,
-    "target_damage_scale": 20.0,
+    # v4: 0.05 → v5: 0.15
+    "wez_hold_bonus": 0.15,
+
+    # v4: 20.0 → v5: 30.0
+    "target_damage_scale": 30.0,
     "ownship_damage_scale": 25.0,
 
     # ============================================================
@@ -66,12 +71,19 @@ MY_REWARD_CONFIG = {
     # ============================================================
     # 종료 보상
     # ============================================================
-    "win_reward": 100.0,
+    # v4: 100 → v5: 150
+    "win_reward": 150.0,
+
     "loss_reward": -150.0,
     "crash_penalty": -150.0,
     "guard_fail_penalty": -50.0,
-    "timeout_penalty": -30.0,
-    "target_crash_reward": 0.0,
+
+    # 상대가 스스로 추락할 때까지 기다리는 행동 방지
+    "target_crash_reward": -100.0,
+
+    # 공격하지 않고 시간만 보내는 행동 방지
+    "timeout_penalty": -50.0,
+
     "draw_reward": -10.0,
 }
 
@@ -89,7 +101,7 @@ def compute_reward(
     end_condition: str,
 ) -> tuple[float, dict]:
     """
-    PPO v4 커스텀 Reward.
+    PPO v5 공격 개선 Reward.
 
     v3 training_log.csv에서 기록하던 Reward 항목:
         ep_reward_pursuit
@@ -101,7 +113,7 @@ def compute_reward(
     """
 
     # ============================================================
-    # 1. 현재 거리와 ATA 계산
+    # 1. 상대와의 거리 및 ATA 계산
     # ============================================================
     distance_m = float(
         geo_info._get_distance(
@@ -124,32 +136,52 @@ def compute_reward(
     # 2. 시간 패널티
     # ============================================================
     step_reward = float(
-        reward_config.get("step_penalty", -0.01)
+        reward_config.get(
+            "step_penalty",
+            -0.01,
+        )
     )
 
     # ============================================================
     # 3. 상대 추적 보상
     # ============================================================
     pursuit_angle_deg = float(
-        reward_config.get("pursuit_angle_deg", 60.0)
+        reward_config.get(
+            "pursuit_angle_deg",
+            60.0,
+        )
     )
 
     pursuit_range_m = float(
-        reward_config.get("pursuit_range_m", 3000.0)
+        reward_config.get(
+            "pursuit_range_m",
+            6000.0,
+        )
     )
 
-    ata_factor = max(
-        0.0,
-        1.0 - ata_deg / pursuit_angle_deg,
-    )
+    if pursuit_angle_deg > 0.0:
+        ata_factor = max(
+            0.0,
+            1.0 - ata_deg / pursuit_angle_deg,
+        )
+    else:
+        ata_factor = 0.0
 
-    range_factor = max(
-        0.0,
-        1.0 - distance_m / pursuit_range_m,
-    )
+    if pursuit_range_m > 0.0:
+        range_factor = max(
+            0.0,
+            1.0 - distance_m / pursuit_range_m,
+        )
+    else:
+        range_factor = 0.0
 
     pursuit_reward = (
-        float(reward_config.get("pursuit_scale", 0.03))
+        float(
+            reward_config.get(
+                "pursuit_scale",
+                0.08,
+            )
+        )
         * ata_factor
         * range_factor
     )
@@ -158,55 +190,68 @@ def compute_reward(
     # 4. 공격하기 좋은 위치 보상
     # ============================================================
     attack_min_range_m = float(
-        reward_config.get("attack_min_range_m", 500.0)
+        reward_config.get(
+            "attack_min_range_m",
+            500.0,
+        )
     )
 
     attack_max_range_m = float(
-        reward_config.get("attack_max_range_m", 920.0)
+        reward_config.get(
+            "attack_max_range_m",
+            920.0,
+        )
     )
 
     attack_ata_deg = float(
-        reward_config.get("attack_ata_deg", 15.0)
+        reward_config.get(
+            "attack_ata_deg",
+            15.0,
+        )
     )
 
-    if (
+    in_attack_position = (
         ata_deg <= attack_ata_deg
         and attack_min_range_m
         <= distance_m
         <= attack_max_range_m
-    ):
+    )
+
+    if in_attack_position:
         pursuit_reward += float(
             reward_config.get(
                 "attack_position_bonus",
-                0.03,
+                0.10,
             )
         )
 
     # ============================================================
-    # 5. WEZ 진입 보상
+    # 5. WEZ 유지 보상
     # ============================================================
-    # single_agent_env.py에서는 target_damage > 0일 때
-    # ownship이 target을 향한 WEZ 안에 들어간 것으로 처리한다.
+    # 환경에서 target_damage가 0보다 크면,
+    # 현재 step에서 아군이 상대를 공격할 수 있는 WEZ 안에 있다는 뜻이다.
     if float(target_damage) > 0.0:
         pursuit_reward += float(
             reward_config.get(
                 "wez_hold_bonus",
-                0.05,
+                0.15,
             )
         )
 
     # ============================================================
     # 6. 피해량 보상
     # ============================================================
-    damage_reward = (
+    target_damage_reward = (
         float(
             reward_config.get(
                 "target_damage_scale",
-                20.0,
+                30.0,
             )
         )
         * float(target_damage)
-        -
+    )
+
+    ownship_damage_penalty = (
         float(
             reward_config.get(
                 "ownship_damage_scale",
@@ -214,6 +259,11 @@ def compute_reward(
             )
         )
         * float(ownship_damage)
+    )
+
+    damage_reward = (
+        target_damage_reward
+        - ownship_damage_penalty
     )
 
     # ============================================================
@@ -225,9 +275,14 @@ def compute_reward(
         ownship_state[StateIndex.ALT]
     )
 
-    if altitude_m < float(
-        reward_config.get("low_altitude_m", 600.0)
-    ):
+    low_altitude_m = float(
+        reward_config.get(
+            "low_altitude_m",
+            600.0,
+        )
+    )
+
+    if altitude_m < low_altitude_m:
         safety_reward -= float(
             reward_config.get(
                 "low_altitude_penalty",
@@ -238,25 +293,27 @@ def compute_reward(
     # ============================================================
     # 8. 잘못된 근접 패널티
     # ============================================================
-    # safety에 합치면 ep_altitude_penalty_steps가 근접 상황까지
-    # 저고도 상황으로 잘못 계산하므로 별도로 계산한다.
+    # 상대와 너무 가까운데 ATA가 크면,
+    # 공격 자세가 아닌 위험한 근접으로 판단한다.
     close_range_penalty = 0.0
 
+    bad_close_range_m = float(
+        reward_config.get(
+            "bad_close_range_m",
+            300.0,
+        )
+    )
+
+    bad_close_ata_deg = float(
+        reward_config.get(
+            "bad_close_ata_deg",
+            30.0,
+        )
+    )
+
     if (
-        distance_m
-        < float(
-            reward_config.get(
-                "bad_close_range_m",
-                300.0,
-            )
-        )
-        and ata_deg
-        > float(
-            reward_config.get(
-                "bad_close_ata_deg",
-                30.0,
-            )
-        )
+        distance_m < bad_close_range_m
+        and ata_deg > bad_close_ata_deg
     ):
         close_range_penalty = -float(
             reward_config.get(
@@ -272,23 +329,26 @@ def compute_reward(
 
     if terminated:
         if end_condition == "target destroyed":
+            # 상대를 직접 격추
             terminal_reward = float(
                 reward_config.get(
                     "win_reward",
-                    100.0,
+                    150.0,
                 )
             )
 
         elif end_condition == "target altitude below min":
-            # 상대가 스스로 추락한 경우
+            # 상대가 스스로 추락
+            # 공격 성공으로 처리하지 않는다.
             terminal_reward = float(
                 reward_config.get(
                     "target_crash_reward",
-                    0.0,
+                    -100.0,
                 )
             )
 
         elif end_condition == "ownship destroyed":
+            # 상대에게 격추됨
             terminal_reward = float(
                 reward_config.get(
                     "loss_reward",
@@ -301,6 +361,7 @@ def compute_reward(
             "FDM Update Fail",
             "Ownship FDM output Fall",
         ):
+            # 아군 추락 또는 비행 모델 실패
             terminal_reward = float(
                 reward_config.get(
                     "crash_penalty",
@@ -325,15 +386,16 @@ def compute_reward(
             )
 
     elif truncated:
+        # max time out 또는 episode step limit
         terminal_reward = float(
             reward_config.get(
                 "timeout_penalty",
-                -30.0,
+                -50.0,
             )
         )
 
     # ============================================================
-    # 10. v3에서 저장하던 Reward 로그 구성
+    # 10. v3 로그 형식 유지
     # ============================================================
     components = {
         "pursuit": float(pursuit_reward),
@@ -342,8 +404,8 @@ def compute_reward(
         "survival": 0.0,
     }
 
-    # step, close range, terminal 보상은 전체 Reward에는 포함하지만
-    # v3 training_log.csv에 별도 열로 추가하지 않는다.
+    # step, 근접 패널티, 종료 보상은 실제 학습 Reward에는 포함하지만
+    # v3 training_log.csv에 새로운 열로 추가하지 않는다.
     total_reward = (
         step_reward
         + pursuit_reward
