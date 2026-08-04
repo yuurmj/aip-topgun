@@ -147,6 +147,11 @@ SAC LSTM은 RLlib 패치가 필요한 고급 경로로 분리해 사용합니다
 | 4-13 | `two_circle_headon_a***` | alpha 투서클 헤드온 |
 | 14 | `full_dogfight` | BT 상대 전면 교전 |
 
+초기 위치·자세 randomization 범위가 `0` 이하이면 해당 축의 offset을 `0`으로
+처리합니다. 따라서 Stage 0처럼 `enabled: true`, `radius: 0.0`으로 위치를 고정하고
+자세만 랜덤화하는 설정도 `ValueError: high <= 0` 없이 실행됩니다. 양수 범위는 환경
+seed를 사용하는 대칭 uniform 분포에서 샘플링됩니다.
+
 학생 curriculum 사용:
 
 ```powershell
@@ -157,6 +162,45 @@ C:\Users\USER\anaconda3\envs\aip\python.exe train_curriculum.py `
   --output-name team01 `
   --output-tag curriculum_v1
 ```
+
+### 학생 초기 시나리오 pool
+
+`student/my_curriculum.py`의 `MY_SCENARIO_POOL`은 아군기와 적군기의 초기 상태를
+직접 정의하는 실행 예제입니다. 각 상태는 아래 7개 값 계약을 사용합니다.
+
+```text
+[N, E, D, roll, pitch, heading, speed]
+```
+
+위치는 m, 자세는 deg, 속도는 m/s이며 NED 좌표이므로 고도 7 km는 `D=-7000`입니다.
+`mode: scenario_pool`의 각 항목은 `name`, `weight`, `ownship`, `target`과 선택적
+`target_mode`를 가집니다. pool/항목 수준에서 `ownship_randomization`,
+`target_randomization`, `shared_randomization`을 설정할 수 있습니다.
+
+stage에 연결할 때는 다음 계약을 사용합니다.
+
+```python
+CurriculumStage(
+    target_mode="behavior_tree",
+    randomization={"enabled": False},
+    env_overrides={"initial_scenario": MY_SCENARIO_POOL},
+)
+```
+
+학습과 동일한 stage로 로컬 교전을 실행할 수 있습니다.
+
+```powershell
+C:\Users\USER\anaconda3\envs\aip\python.exe run_local_dogfight.py `
+  --stages-module student.my_curriculum `
+  --stage-index 1 `
+  --ownship-backend rl `
+  --ownship-bundle-dir artifacts\models\team01\curriculum_v1 `
+  --target-backend bt --save-log
+```
+
+판단 근거: named weighted pool은 임의 위치·자세·속도 분포를 명시적으로 표현하면서
+환경 seed로 재현할 수 있습니다. `initial_scenario_index` 지표와 bundle metadata의
+scenario 이름/가중치/설정 hash로 어떤 분포에서 나온 결과인지 추적합니다.
 
 ## 6. 체크포인트 재개와 번들 재시작
 
@@ -443,6 +487,25 @@ C:\Users\USER\anaconda3\envs\aip\python.exe tools\dashboard.py `
 브라우저 기반 Replay 탭이 표준 확인 경로입니다. 기존 호환 명령
 `tools\training_dashboard\server.py`와 `tools\web_log_viewer.py`도 통합 서버를
 실행합니다.
+
+### 대시보드 배포 구성 확인
+
+`Release/tools/dashboard.py`와 호환 launcher만으로는 실행할 수 없습니다. 배포본에는
+다음 로컬 패키지와 정적 자산이 함께 있어야 합니다.
+
+```text
+tools/
+├── dashboard.py
+├── dogfight_dashboard/
+└── web_log_viewer/
+```
+
+Release launcher는 바깥 `DogFightEnv/tools`를 참조하지 않고 동일한
+`Release/tools`의 패키지만 import하며, 기본 환경 루트도 `Release`입니다.
+`ModuleNotFoundError: No module named 'dogfight_dashboard'`가 발생하면 압축을 푼
+폴더에서 `tools\dogfight_dashboard\server.py` 존재 여부를 확인하십시오. 파일이 없다면
+launcher만 포함된 불완전한 구버전 배포본이므로, 폴더 하나를 임의로 섞기보다 최신
+Release 전체 압축본을 다시 받는 것을 권장합니다.
 
 ## 9. Smoke 검증
 

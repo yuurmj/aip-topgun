@@ -71,6 +71,7 @@ class DogFightCallbacks(DefaultCallbacks):
             float(info.get("ep_altitude_penalty_steps", 0)),
         )
         for key in (
+            "initial_scenario_index",
             "initial_alpha_deg",
             "initial_ata_deg",
             "initial_aa_deg",

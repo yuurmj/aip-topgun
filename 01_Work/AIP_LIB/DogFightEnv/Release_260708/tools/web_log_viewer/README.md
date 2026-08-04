@@ -6,6 +6,10 @@ Tacview CSV playback contracts continue to work.
 
 ## Run
 
+Each environment contains its own package copy. Run the launcher from the
+corresponding `MyTrainEnv` or `Release` root; it does not import the workspace
+root `DogFightEnv/tools`.
+
 From `DogFightEnv/MyTrainEnv`:
 
 ```powershell

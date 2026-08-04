@@ -296,7 +296,7 @@ def attitude_matrix(
     cy, sy = math.cos(yaw), math.sin(yaw)
 
     rot_x = ((1.0, 0.0, 0.0), (0.0, cr, -sr), (0.0, sr, cr))
-    rot_y = ((cp, 0.0, sp), (0.0, 1.0, 0.0), (-sp, 0.0, cp))
+    rot_y = ((cp, 0.0, -sp), (0.0, 1.0, 0.0), (sp, 0.0, cp))
     rot_z = ((cy, -sy, 0.0), (sy, cy, 0.0), (0.0, 0.0, 1.0))
     return matmul3(matmul3(rot_z, rot_y), rot_x)
 

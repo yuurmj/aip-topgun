@@ -87,6 +87,7 @@ def training_row_to_dashboard_metrics(
         "dogfight/wez_steps": row.get("ep_wez_steps"),
         "dogfight/distance_mean": row.get("ep_mean_distance"),
         "dogfight/distance_min": row.get("ep_min_distance"),
+        "dogfight/initial_scenario_index": row.get("initial_scenario_index"),
         "dogfight/initial_alpha_deg": row.get("initial_alpha_deg"),
         "dogfight/initial_ata_deg": row.get("initial_ata_deg"),
         "dogfight/initial_aa_deg": row.get("initial_aa_deg"),

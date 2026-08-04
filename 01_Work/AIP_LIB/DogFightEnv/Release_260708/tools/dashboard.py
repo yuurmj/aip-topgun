@@ -7,8 +7,16 @@ from pathlib import Path
 
 
 ENV_ROOT = Path(__file__).resolve().parents[1]
-RELEASE_TOOLS = ENV_ROOT / "tools"
-sys.path.insert(0, str(RELEASE_TOOLS))
+ENV_TOOLS = ENV_ROOT / "tools"
+DASHBOARD_SERVER = ENV_TOOLS / "dogfight_dashboard" / "server.py"
+if not DASHBOARD_SERVER.is_file():
+    raise SystemExit(
+        "Missing local dashboard package: "
+        f"{DASHBOARD_SERVER.parent}. The distribution must include "
+        "tools/dogfight_dashboard."
+    )
+if str(ENV_TOOLS) not in sys.path:
+    sys.path.insert(0, str(ENV_TOOLS))
 
 from dogfight_dashboard.server import main  # noqa: E402
 

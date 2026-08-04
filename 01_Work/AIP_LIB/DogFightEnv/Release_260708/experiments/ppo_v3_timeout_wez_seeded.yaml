@@ -1,0 +1,128 @@
+# PPO v3: correct AA direction and prevent close-range overshoot.
+
+name: ppo_v3_timeout_wez_seeded
+script: train_rllib
+
+output:
+  name: team01
+  tag: ppo_mlp_v3_timeout_wez_seeded
+
+env:
+  observation_mode: tactical16
+  target_mode: fixed
+  target_behavior_dll: AIP_BASE_target.dll
+  reward_module: student.my_reward
+  max_engage_time: 120.0
+  episode_step_limit: 1200
+
+env_config:
+  step_ratio: 6
+
+  # Evaluate and train from slightly different, reproducible initial states.
+  ownship_randomization:
+    enabled: true
+    radius: 100.0
+    r_roll: 3.0
+    r_pitch: 3.0
+    r_heading: 5.0
+
+  # Keep this complete block. In this release, env_config.reward takes
+  # precedence over MY_REWARD_CONFIG when both are present.
+  reward:
+    step_penalty: -0.01
+    low_altitude_threshold_m: 600.0
+    low_altitude_penalty: 0.20
+
+    pursuit_scale: 0.02
+    pursuit_half_angle_deg: 30.0
+    pursuit_range_m: 8000.0
+
+    attack_geometry_scale: 0.30
+    soft_ata_limit_deg: 30.0
+    soft_aa_limit_deg: 45.0
+    attack_range_min_m: 152.4
+    attack_range_best_m: 533.4
+    attack_range_max_m: 1000.0
+
+    ata_stage_max_range_m: 1500.0
+    ata_under_10_bonus: 0.03
+    ata_under_5_bonus: 0.08
+    ata_under_2_bonus: 0.15
+    ata_under_1_bonus: 0.25
+
+    wez_bonus: 1.00
+
+    too_close_distance_m: 300.0
+    too_close_ata_deg: 10.0
+    too_close_penalty: 0.40
+
+    escape_start_m: 3000.0
+    escape_full_m: 8000.0
+    escape_penalty_scale: 0.02
+
+    damage_scale: 20.0
+    win_reward: 100.0
+    loss_reward: -100.0
+    crash_penalty: -100.0
+    timeout_penalty: -30.0
+    draw_reward: -20.0
+    guard_fail_penalty: -50.0
+
+algo:
+  name: ppo
+  framework: torch
+  lr: 3.0e-4
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.2
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  # v1 bundle에서 이어 학습할 때 우선 100회만 실행한다.
+  iterations: 100
+
+  # CPU 병렬 환경 2개. 메모리 부족이나 worker 오류가 나면 1로 낮춘다.
+  num_env_runners: 2
+  num_envs_per_env_runner: 1
+  rollout_fragment_length: auto
+  batch_mode: truncate_episodes
+
+  save_lightweight_bundle: true
+  lightweight_bundle_frequency: 50
+  save_native_checkpoint: true
+  native_checkpoint_frequency: 50
+
+  # Recommended when the v1 bundle exists. Change the final folder name to
+  # the actual v1 output tag, then remove the leading '#'.
+  # init_bundle: artifacts/models/team01/ppo_mlp_v1_attack_geometry
+
+dashboard:
+  enabled: true
+  logdir: artifacts/dashboard
+
+policy_probe:
+  enabled: true
+  interval: 25
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  # 중간 평가는 가볍게 하고, 최종 모델만 별도로 10경기 평가한다.
+  interval: 25
+  steps: 1200
+  episodes: 3
+  print: true
+
+notes: >-
+  PPO v3: corrected aspect-angle direction, stronger attack geometry and WEZ
+  rewards, two-stage overshoot penalty, small initial-state randomization,
+  far-distance penalty, and timeout handling for terminated/truncated episodes.

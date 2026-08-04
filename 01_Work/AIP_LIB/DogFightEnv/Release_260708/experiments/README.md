@@ -38,7 +38,7 @@ C:\Users\USER\anaconda3\envs\aip\python.exe scripts\run_experiment.py experiment
 | `env.observation_mode` | `classic12`, `relative14`, `tactical16`, `custom` |
 | `env.observation_module` | `student.my_observation` 같은 custom 관측 module path |
 | `env.target_mode` | `fixed`, `loiter`, `autopilot`, `behavior_tree` |
-| `env_config.initial_scenario` | reset 시 초기 배치와 target type 분포 설정 |
+| `env_config.initial_scenario` | reset 시 초기 배치와 target type 분포 설정. 일반 사용자 배치는 `mode: scenario_pool` 사용 |
 | `env.reward_module` | `student.my_reward` 같은 개인 보상 module path |
 | `env_config.reward` | 기본 보상 scale 조정 |
 | `algo.name` | `sac` 또는 `ppo` |
@@ -87,6 +87,10 @@ env:
 - `initial_scenario.mode: ref_old_random`을 사용하면 reset마다 ref old scenario index를
   뽑아 BT/loiter target을 섞을 수 있습니다. 이때 초기 `env.target_mode`는
   `behavior_tree`로 둡니다. index `0..4`는 BT target, `5..7`은 loiter target입니다.
+- 새 사용자 배치는 `initial_scenario.mode: scenario_pool`과 named weighted
+  `scenarios`로 정의합니다. 각 항목의 양 기체 7값 상태와 `target_mode`, pool/항목별
+  `ownship_randomization`, `target_randomization`, `shared_randomization` 계약은
+  `student/my_curriculum.py`의 `MY_SCENARIO_POOL` 예제를 따릅니다.
 - `run_experiment.py`는 YAML 원본을 `--experiment-yaml`로 넘기며, `train_rllib.py`가
   YAML의 `env_config`를 실제 환경 설정에 병합합니다.
 - SAC LSTM은 Ray/RLlib 설치본 패치가 필요한 고급 기능이므로 `student_sac_lstm.yaml`에

@@ -16,10 +16,16 @@ if str(SRC) not in sys.path:
 from DogFightEnvWrapper import DogFightWrapper
 from dogfight.ai.bt_action_provider import BTActionProvider
 from dogfight.ai.bt_rule_manager import activate_rule_xml
+from dogfight.ai.curriculum import build_stage_env_config
 from dogfight.ai.hybrid_action_provider import HybridActionProvider
 from dogfight.ai.rllib_utils import build_algorithm_from_bundle
 from dogfight.ai.rl_action_provider import RLActionProvider
-from dogfight.ai.student_hooks import load_observation_hook
+from dogfight.ai.student_hooks import (
+    load_curriculum_stages,
+    load_observation_hook,
+)
+from dogfight.ai.training.config_io import deep_update, load_experiment_env_config
+from dogfight.config import merge_env_config
 
 
 def parse_args():
@@ -41,6 +47,19 @@ def parse_args():
     parser.add_argument("--max-engage-time", type=float, default=300.0)
     parser.add_argument("--episode-step-limit", type=int, default=18000)
     parser.add_argument("--min-altitude", type=float, default=300.0)
+    parser.add_argument(
+        "--experiment-yaml",
+        default="",
+        help="Optional experiment YAML whose env_config supplies the scenario.",
+    )
+    parser.add_argument(
+        "--stages-module",
+        default="",
+        help="Optional curriculum module used to reuse a stage scenario.",
+    )
+    parser.add_argument(
+        "--stage-index", type=int, default=None, help="Stage index to reuse."
+    )
     parser.add_argument("--save-log", action="store_true", help="Save tacview CSV log after the episode.")
     return parser.parse_args()
 
@@ -75,6 +94,38 @@ def backend_to_env_mode(backend: str) -> str:
     return "rl"
 
 
+def build_local_env_config(args, observation_mode: str) -> dict:
+    """Build local evaluation config while keeping CLI backends authoritative."""
+    env_config = merge_env_config({
+        "observation_mode": observation_mode,
+        "observation_module": args.observation_module,
+        "max_engage_time": args.max_engage_time,
+        "episode_step_limit": args.episode_step_limit,
+        "min_altitude": args.min_altitude,
+    })
+    if args.experiment_yaml:
+        deep_update(env_config, load_experiment_env_config(args.experiment_yaml, ROOT))
+    if args.stages_module:
+        if args.stage_index is None:
+            raise ValueError("--stage-index is required with --stages-module")
+        stages = load_curriculum_stages(args.stages_module)
+        matches = [stage for stage in stages if stage.index == args.stage_index]
+        if not matches:
+            raise ValueError(
+                f"stage index {args.stage_index} not found in {args.stages_module!r}"
+            )
+        env_config = build_stage_env_config(env_config, matches[0])
+    elif args.stage_index is not None:
+        raise ValueError("--stages-module is required with --stage-index")
+
+    env_config["observation_mode"] = observation_mode
+    env_config["observation_module"] = args.observation_module
+    env_config["ownship_control_mode"] = backend_to_env_mode(args.ownship_backend)
+    env_config["target_mode"] = backend_to_env_mode(args.target_backend)
+    env_config["scenario_pool_apply_target_mode"] = False
+    return env_config
+
+
 def main():
     args = parse_args()
     observation_hook = load_observation_hook(args.observation_module) if args.observation_module else None
@@ -100,17 +151,11 @@ def main():
         residual_scale=args.residual_scale,
     )
 
+    observation_mode = observation_hook["mode"] if observation_hook else args.observation_mode
+    env_config = build_local_env_config(args, observation_mode)
     with activate_rule_xml(args.bt_rule_xml, ROOT):
         env = DogFightWrapper(
-            env_config={
-                "observation_mode": observation_hook["mode"] if observation_hook else args.observation_mode,
-                "observation_module": args.observation_module,
-                "ownship_control_mode": backend_to_env_mode(args.ownship_backend),
-                "target_mode": backend_to_env_mode(args.target_backend),
-                "max_engage_time": args.max_engage_time,
-                "episode_step_limit": args.episode_step_limit,
-                "min_altitude": args.min_altitude,
-            },
+            env_config=env_config,
             observation_fn=observation_hook["build_observation"] if observation_hook else None,
             observation_size=observation_hook["size"] if observation_hook else None,
             observation_low=observation_hook["low"] if observation_hook else None,

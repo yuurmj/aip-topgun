@@ -16,6 +16,24 @@
     <span id="app-status" class="app-status">Starting...</span>
   </header>
 
+  <section class="path-panel" aria-label="Log directories">
+    <label class="path-field" for="training-logdir-input">
+      <span>Training logdir</span>
+      <input id="training-logdir-input" class="path-input" type="text" list="training-logdir-options" spellcheck="false">
+    </label>
+    <label class="path-field" for="replay-logdir-input">
+      <span>Replay logdir</span>
+      <input id="replay-logdir-input" class="path-input" type="text" list="replay-logdir-options" spellcheck="false">
+    </label>
+    <div class="path-actions">
+      <button id="apply-paths" type="button">Apply</button>
+      <button id="reset-paths" type="button">Reset</button>
+    </div>
+    <span id="path-status" class="path-status">Starting...</span>
+    <datalist id="training-logdir-options"></datalist>
+    <datalist id="replay-logdir-options"></datalist>
+  </section>
+
   <main>
     <section id="training-panel" class="tab-panel active" aria-labelledby="tab-training">
       <header class="training-toolbar">
