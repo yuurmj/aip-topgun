@@ -7,7 +7,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-
 for path in (ROOT, SRC):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
@@ -16,63 +15,57 @@ from dogfight.sim.state_schema import StateIndex
 
 
 MY_REWARD_CONFIG = {
-    # 기존 training record와 호환하기 위한 키
+    # Existing training-record compatibility keys.
     "survival_bonus": 0.0,
-    "damage_scale": 30.0,
+    "damage_scale": 40.0,
     "pursuit_scale": 0.05,
     "pursuit_half_angle_deg": 30.0,
     "pursuit_range_m": 2500.0,
     "step_penalty": -0.01,
 
-    # 표적 방향 및 WEZ 접근 Reward
+    # Stage 0 disables attack shaping; Stage 1 enables it.
+    "attack_shaping_enabled": 1.0,
+
+    # Target alignment and pre-WEZ gradients.
     "alignment_scale": 0.05,
     "pre_wez_outer_margin_m": 1500.0,
-
     "coarse_aim_angle_deg": 30.0,
     "coarse_aim_bonus": 0.08,
-
     "fine_aim_angle_deg": 10.0,
     "fine_aim_bonus": 0.12,
 
-    # v11 실제 WEZ 유지 및 WEZ 각도 이탈 패널티
-    "wez_hold_bonus": 0.75,
+    # Real-WEZ hold reward.
+    "wez_hold_bonus": 1.00,
     "wez_miss_angle_deg": 10.0,
-    "wez_miss_penalty": 0.75,
-
-    # 피해 Reward
-    "target_damage_scale": 30.0,
+    "wez_miss_penalty": 1.00,
+    "target_damage_scale": 40.0,
     "ownship_damage_scale": 25.0,
 
-    # 안전 고도
+    # Altitude and attitude stability.
     "safe_altitude_min_m": 5000.0,
     "safe_altitude_max_m": 8000.0,
     "safe_altitude_bonus": 0.01,
-
-    # 저고도 패널티
     "low_altitude_warning_m": 5000.0,
     "low_altitude_m": 3000.0,
     "low_altitude_penalty": 0.50,
 
-    # v11 Roll 안정화
     "roll_penalty_full_deg": 60.0,
     "roll_penalty": 0.30,
 
-    # 수평 Pitch 유지
     "level_pitch_start_deg": 3.0,
     "level_pitch_full_deg": 25.0,
     "level_pitch_penalty": 0.20,
 
-    # 급강하 추가 패널티
     "dive_pitch_start_deg": -3.0,
     "dive_pitch_full_deg": -25.0,
     "dive_pitch_penalty": 0.30,
 
-    # 너무 가까운 거리에서 표적을 놓쳤을 때 패널티
+    # Passing too close while pointing away from the target.
     "bad_close_range_m": 300.0,
     "bad_close_ata_deg": 30.0,
     "bad_close_penalty": 0.20,
 
-    # 종료 Reward
+    # Terminal rewards.
     "win_reward": 150.0,
     "loss_reward": -150.0,
     "crash_penalty": -200.0,
@@ -84,14 +77,7 @@ MY_REWARD_CONFIG = {
 
 
 def _clamp01(value: float) -> float:
-    """값을 0~1 범위로 제한한다."""
-    return max(
-        0.0,
-        min(
-            1.0,
-            value,
-        ),
-    )
+    return max(0.0, min(1.0, value))
 
 
 def _linear_factor(
@@ -99,27 +85,12 @@ def _linear_factor(
     start: float,
     full: float,
 ) -> float:
-    """
-    start에서 full 방향으로 증가하는 0~1 계수를 반환한다.
-
-    음수 방향에서도 사용할 수 있다.
-
-    예:
-        start = -3
-        full = -25
-
-        value = -3  -> 0
-        value = -14 -> 약 0.5
-        value = -25 -> 1
-    """
     span = full - start
 
     if span == 0.0:
         return 1.0 if value == full else 0.0
 
-    return _clamp01(
-        (value - start) / span
-    )
+    return _clamp01((value - start) / span)
 
 
 def _outside_band_factor(
@@ -127,12 +98,6 @@ def _outside_band_factor(
     start_abs: float,
     full_abs: float,
 ) -> float:
-    """
-    절댓값이 start_abs 이내면 0을 반환한다.
-
-    start_abs를 벗어나면 증가하고 full_abs 이상에서
-    1을 반환한다.
-    """
     if absolute_value <= start_abs:
         return 0.0
 
@@ -140,14 +105,8 @@ def _outside_band_factor(
         return 1.0
 
     return _clamp01(
-        (
-            absolute_value
-            - start_abs
-        )
-        / (
-            full_abs
-            - start_abs
-        )
+        (absolute_value - start_abs)
+        / (full_abs - start_abs)
     )
 
 
@@ -155,17 +114,12 @@ def _aim_factor(
     ata_deg: float,
     full_angle_deg: float,
 ) -> float:
-    """
-    ATA 0도에서 1을 반환하고 제한 각도에서 0을 반환한다.
-    """
     if full_angle_deg <= 0.0:
         return 0.0
 
     return max(
         0.0,
-        1.0
-        - ata_deg
-        / full_angle_deg,
+        1.0 - ata_deg / full_angle_deg,
     )
 
 
@@ -175,19 +129,7 @@ def _range_readiness(
     wez_max_m: float,
     outer_margin_m: float,
 ) -> float:
-    """
-    실제 WEZ 거리 안에서는 1을 반환한다.
-
-    WEZ 최대 거리보다 먼 경우 outer_margin_m 구간에 걸쳐
-    1에서 0으로 감소한다.
-
-    WEZ 최소 거리보다 가까운 경우에도 거리가 0에
-    가까워질수록 0으로 감소한다.
-    """
-    if wez_min_m < 0.0:
-        return 0.0
-
-    if wez_max_m <= wez_min_m:
+    if wez_min_m < 0.0 or wez_max_m <= wez_min_m:
         return 0.0
 
     if distance_m < wez_min_m:
@@ -208,10 +150,7 @@ def _range_readiness(
     return max(
         0.0,
         1.0
-        - (
-            distance_m
-            - wez_max_m
-        )
+        - (distance_m - wez_max_m)
         / outer_margin_m,
     )
 
@@ -228,16 +167,8 @@ def compute_reward(
     truncated: bool,
     end_condition: str,
 ) -> tuple[float, dict]:
-    """
-    v11 WEZ 유지 및 Roll/Pitch 안정화 Reward.
+    """Compute v12 flight-stability and WEZ-hold reward."""
 
-    training_log.csv 호환을 위해 component는 기존과 동일하게
-    pursuit, damage, safety, survival 네 개만 사용한다.
-    """
-
-    # ------------------------------------------------------------
-    # 1. 거리와 ATA
-    # ------------------------------------------------------------
     distance_m = float(
         geo_info._get_distance(
             ownship_state,
@@ -255,6 +186,13 @@ def compute_reward(
         )
     )
 
+    survival_reward = float(
+        reward_config.get(
+            "survival_bonus",
+            0.0,
+        )
+    )
+
     step_reward = float(
         reward_config.get(
             "step_penalty",
@@ -262,227 +200,183 @@ def compute_reward(
         )
     )
 
-    # ------------------------------------------------------------
-    # 2. 전체 방향 정렬 Reward
-    #
-    # ATA 0도   : +alignment_scale
-    # ATA 90도  : 0
-    # ATA 180도 : -alignment_scale
-    # ------------------------------------------------------------
-    alignment_scale = float(
-        reward_config.get(
-            "alignment_scale",
-            0.05,
+    attack_enabled = (
+        float(
+            reward_config.get(
+                "attack_shaping_enabled",
+                1.0,
+            )
         )
+        > 0.0
     )
 
-    alignment_reward = (
-        alignment_scale
-        * math.cos(
+    pursuit_reward = 0.0
+    damage_reward = 0.0
+
+    if attack_enabled:
+        alignment_reward = float(
+            reward_config.get(
+                "alignment_scale",
+                0.05,
+            )
+        ) * math.cos(
             math.radians(ata_deg)
         )
-    )
 
-    # ------------------------------------------------------------
-    # 3. 실제 환경 WEZ 설정
-    #
-    # 현재 환경 기본값:
-    # 최소 거리 약 152.4m
-    # 최대 거리 약 914.4m
-    # 전체 각도 2도
-    # 실제 판정 반각은 1도
-    # ------------------------------------------------------------
-    wez_min_m = float(
-        wez_config["min_range_m"]
-    )
-
-    wez_max_m = float(
-        wez_config["max_range_m"]
-    )
-
-    wez_half_angle_deg = (
-        float(
-            wez_config["angle_deg"]
+        wez_min_m = float(
+            wez_config["min_range_m"]
         )
-        / 2.0
-    )
-
-    range_readiness = _range_readiness(
-        distance_m=distance_m,
-        wez_min_m=wez_min_m,
-        wez_max_m=wez_max_m,
-        outer_margin_m=float(
-            reward_config.get(
-                "pre_wez_outer_margin_m",
-                1500.0,
-            )
-        ),
-    )
-
-    # ------------------------------------------------------------
-    # 4. 30도 이하 coarse aim
-    # ------------------------------------------------------------
-    coarse_aim_reward = (
-        float(
-            reward_config.get(
-                "coarse_aim_bonus",
-                0.08,
-            )
+        wez_max_m = float(
+            wez_config["max_range_m"]
         )
-        * _aim_factor(
-            ata_deg=ata_deg,
-            full_angle_deg=float(
+        wez_half_angle_deg = (
+            float(wez_config["angle_deg"])
+            / 2.0
+        )
+
+        range_readiness = _range_readiness(
+            distance_m=distance_m,
+            wez_min_m=wez_min_m,
+            wez_max_m=wez_max_m,
+            outer_margin_m=float(
                 reward_config.get(
-                    "coarse_aim_angle_deg",
-                    30.0,
+                    "pre_wez_outer_margin_m",
+                    1500.0,
                 )
             ),
         )
-        * range_readiness
-    )
 
-    # ------------------------------------------------------------
-    # 5. 10도 이하 fine aim
-    # ------------------------------------------------------------
-    fine_aim_reward = (
-        float(
-            reward_config.get(
-                "fine_aim_bonus",
-                0.12,
-            )
-        )
-        * _aim_factor(
-            ata_deg=ata_deg,
-            full_angle_deg=float(
+        coarse_aim_reward = (
+            float(
                 reward_config.get(
-                    "fine_aim_angle_deg",
+                    "coarse_aim_bonus",
+                    0.08,
+                )
+            )
+            * _aim_factor(
+                ata_deg=ata_deg,
+                full_angle_deg=float(
+                    reward_config.get(
+                        "coarse_aim_angle_deg",
+                        30.0,
+                    )
+                ),
+            )
+            * range_readiness
+        )
+
+        fine_aim_reward = (
+            float(
+                reward_config.get(
+                    "fine_aim_bonus",
+                    0.12,
+                )
+            )
+            * _aim_factor(
+                ata_deg=ata_deg,
+                full_angle_deg=float(
+                    reward_config.get(
+                        "fine_aim_angle_deg",
+                        10.0,
+                    )
+                ),
+            )
+            * range_readiness
+        )
+
+        in_wez_range = (
+            wez_min_m
+            <= distance_m
+            <= wez_max_m
+        )
+
+        in_wez = (
+            in_wez_range
+            and ata_deg <= wez_half_angle_deg
+        )
+
+        direct_wez_reward = 0.0
+        wez_miss_reward = 0.0
+
+        if in_wez:
+            direct_wez_reward = float(
+                reward_config.get(
+                    "wez_hold_bonus",
+                    1.00,
+                )
+            )
+
+        elif in_wez_range:
+            miss_angle_deg = float(
+                reward_config.get(
+                    "wez_miss_angle_deg",
                     10.0,
                 )
-            ),
-        )
-        * range_readiness
-    )
-
-    # ------------------------------------------------------------
-    # 6. 실제 WEZ 유지 및 각도 이탈 패널티
-    #
-    # 실제 WEZ 안:
-    #   +0.75
-    #
-    # 실제 WEZ 거리 안이지만 ATA가 1도를 초과:
-    #   ATA 오차에 따라 최대 -0.75
-    # ------------------------------------------------------------
-    in_wez_range = (
-        wez_min_m
-        <= distance_m
-        <= wez_max_m
-    )
-
-    in_wez = (
-        in_wez_range
-        and ata_deg
-        <= wez_half_angle_deg
-    )
-
-    direct_wez_reward = 0.0
-    wez_miss_reward = 0.0
-
-    if in_wez:
-        direct_wez_reward = float(
-            reward_config.get(
-                "wez_hold_bonus",
-                0.75,
             )
-        )
 
-    elif in_wez_range:
-        miss_angle_deg = float(
-            reward_config.get(
-                "wez_miss_angle_deg",
-                10.0,
-            )
-        )
-
-        if miss_angle_deg > 0.0:
-            miss_factor = _clamp01(
-                (
-                    ata_deg
-                    - wez_half_angle_deg
+            if miss_angle_deg > 0.0:
+                miss_factor = _clamp01(
+                    (
+                        ata_deg
+                        - wez_half_angle_deg
+                    )
+                    / miss_angle_deg
                 )
-                / miss_angle_deg
-            )
-        else:
-            miss_factor = 1.0
+            else:
+                miss_factor = 1.0
 
-        wez_miss_reward = (
-            -float(
+            wez_miss_reward = -float(
                 reward_config.get(
                     "wez_miss_penalty",
-                    0.75,
+                    1.00,
+                )
+            ) * miss_factor
+
+        pursuit_reward = (
+            alignment_reward
+            + coarse_aim_reward
+            + fine_aim_reward
+            + direct_wez_reward
+            + wez_miss_reward
+        )
+
+        damage_reward = (
+            float(
+                reward_config.get(
+                    "target_damage_scale",
+                    40.0,
                 )
             )
-            * miss_factor
-        )
-
-    pursuit_reward = (
-        alignment_reward
-        + coarse_aim_reward
-        + fine_aim_reward
-        + direct_wez_reward
-        + wez_miss_reward
-    )
-
-    # ------------------------------------------------------------
-    # 7. 피해 Reward
-    # ------------------------------------------------------------
-    damage_reward = (
-        float(
-            reward_config.get(
-                "target_damage_scale",
-                30.0,
+            * float(target_damage)
+            - float(
+                reward_config.get(
+                    "ownship_damage_scale",
+                    25.0,
+                )
             )
+            * float(ownship_damage)
         )
-        * float(target_damage)
-        - float(
-            reward_config.get(
-                "ownship_damage_scale",
-                25.0,
-            )
-        )
-        * float(ownship_damage)
-    )
 
-    # ------------------------------------------------------------
-    # 8. 고도, Roll, Pitch
-    #
-    # 실제 소스에 존재하는 StateIndex만 사용한다.
-    # ------------------------------------------------------------
     altitude_m = float(
         ownship_state[StateIndex.ALT]
     )
-
     roll_deg = abs(
         float(
             ownship_state[StateIndex.ROLL]
         )
     )
-
     pitch_deg = float(
         ownship_state[StateIndex.PITCH]
     )
 
     safety_reward = 0.0
 
-    # ------------------------------------------------------------
-    # 9. 안전 고도 유지
-    # ------------------------------------------------------------
     safe_min_m = float(
         reward_config.get(
             "safe_altitude_min_m",
             5000.0,
         )
     )
-
     safe_max_m = float(
         reward_config.get(
             "safe_altitude_max_m",
@@ -490,11 +384,7 @@ def compute_reward(
         )
     )
 
-    if (
-        safe_min_m
-        <= altitude_m
-        <= safe_max_m
-    ):
+    if safe_min_m <= altitude_m <= safe_max_m:
         safety_reward += float(
             reward_config.get(
                 "safe_altitude_bonus",
@@ -502,16 +392,12 @@ def compute_reward(
             )
         )
 
-    # ------------------------------------------------------------
-    # 10. 저고도 패널티
-    # ------------------------------------------------------------
     warning_m = float(
         reward_config.get(
             "low_altitude_warning_m",
             5000.0,
         )
     )
-
     low_m = float(
         reward_config.get(
             "low_altitude_m",
@@ -522,35 +408,19 @@ def compute_reward(
     if altitude_m < warning_m:
         if warning_m > low_m:
             low_factor = _clamp01(
-                (
-                    warning_m
-                    - altitude_m
-                )
-                / (
-                    warning_m
-                    - low_m
-                )
+                (warning_m - altitude_m)
+                / (warning_m - low_m)
             )
         else:
             low_factor = 1.0
 
-        safety_reward -= (
-            float(
-                reward_config.get(
-                    "low_altitude_penalty",
-                    0.50,
-                )
+        safety_reward -= float(
+            reward_config.get(
+                "low_altitude_penalty",
+                0.50,
             )
-            * low_factor
-        )
+        ) * low_factor
 
-    # ------------------------------------------------------------
-    # 11. Roll 안정화 패널티
-    #
-    # Roll 0도  : 0
-    # Roll 30도 : 최대값의 약 50%
-    # Roll 60도 : 최대값
-    # ------------------------------------------------------------
     roll_full_deg = float(
         reward_config.get(
             "roll_penalty_full_deg",
@@ -564,27 +434,16 @@ def compute_reward(
         )
     else:
         roll_factor = (
-            1.0
-            if roll_deg > 0.0
-            else 0.0
+            1.0 if roll_deg > 0.0 else 0.0
         )
 
-    safety_reward -= (
-        float(
-            reward_config.get(
-                "roll_penalty",
-                0.30,
-            )
+    safety_reward -= float(
+        reward_config.get(
+            "roll_penalty",
+            0.30,
         )
-        * roll_factor
-    )
+    ) * roll_factor
 
-    # ------------------------------------------------------------
-    # 12. 수평 Pitch 유지 패널티
-    #
-    # Pitch 절댓값 3도 이내: 0
-    # Pitch 절댓값 25도 이상: 최대 -0.20
-    # ------------------------------------------------------------
     pitch_factor = _outside_band_factor(
         absolute_value=abs(pitch_deg),
         start_abs=float(
@@ -601,28 +460,19 @@ def compute_reward(
         ),
     )
 
-    safety_reward -= (
-        float(
-            reward_config.get(
-                "level_pitch_penalty",
-                0.20,
-            )
+    safety_reward -= float(
+        reward_config.get(
+            "level_pitch_penalty",
+            0.20,
         )
-        * pitch_factor
-    )
+    ) * pitch_factor
 
-    # ------------------------------------------------------------
-    # 13. 급강하 추가 패널티
-    #
-    # 음수 Pitch 방향에만 추가 적용한다.
-    # ------------------------------------------------------------
     dive_start_deg = float(
         reward_config.get(
             "dive_pitch_start_deg",
             -3.0,
         )
     )
-
     dive_full_deg = float(
         reward_config.get(
             "dive_pitch_full_deg",
@@ -631,28 +481,20 @@ def compute_reward(
     )
 
     if pitch_deg < dive_start_deg:
-        dive_factor = _linear_factor(
+        safety_reward -= float(
+            reward_config.get(
+                "dive_pitch_penalty",
+                0.30,
+            )
+        ) * _linear_factor(
             value=pitch_deg,
             start=dive_start_deg,
             full=dive_full_deg,
         )
 
-        safety_reward -= (
-            float(
-                reward_config.get(
-                    "dive_pitch_penalty",
-                    0.30,
-                )
-            )
-            * dive_factor
-        )
-
-    # ------------------------------------------------------------
-    # 14. 지나치게 가까운 상태에서 표적을 놓친 경우
-    # ------------------------------------------------------------
     close_range_penalty = 0.0
 
-    if (
+    if attack_enabled and (
         distance_m
         < float(
             reward_config.get(
@@ -675,9 +517,6 @@ def compute_reward(
             )
         )
 
-    # ------------------------------------------------------------
-    # 15. 종료 Reward
-    # ------------------------------------------------------------
     terminal_reward = 0.0
 
     if terminated:
@@ -717,7 +556,10 @@ def compute_reward(
                 )
             )
 
-        elif end_condition == "two circle headon guard fail":
+        elif (
+            end_condition
+            == "two circle headon guard fail"
+        ):
             terminal_reward = float(
                 reward_config.get(
                     "guard_fail_penalty",
@@ -741,26 +583,17 @@ def compute_reward(
             )
         )
 
-    # ------------------------------------------------------------
-    # 16. training_log.csv component
-    #
-    # 기존 네 개 키를 그대로 유지한다.
-    # ------------------------------------------------------------
+    # Keep these keys unchanged for training_log.csv compatibility.
     components = {
-        "pursuit": float(
-            pursuit_reward
-        ),
-        "damage": float(
-            damage_reward
-        ),
-        "safety": float(
-            safety_reward
-        ),
-        "survival": 0.0,
+        "pursuit": float(pursuit_reward),
+        "damage": float(damage_reward),
+        "safety": float(safety_reward),
+        "survival": float(survival_reward),
     }
 
     total_reward = (
-        step_reward
+        survival_reward
+        + step_reward
         + pursuit_reward
         + damage_reward
         + safety_reward
@@ -768,10 +601,7 @@ def compute_reward(
         + terminal_reward
     )
 
-    return (
-        float(total_reward),
-        components,
-    )
+    return float(total_reward), components
 
 
 __all__ = [
