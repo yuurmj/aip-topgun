@@ -22,6 +22,50 @@ for path in (ROOT, SRC):
 
 from dogfight.ai.curriculum import CurriculumStage
 
+MY_SCENARIO_POOL = {
+    "mode": "scenario_pool",
+    "scenarios": [
+        {
+            "name": "head_on_bt",
+            "weight": 0.5,
+            "ownship": [1000.0, 0.0, -7000.0, 0.0, 0.0, 0.0, 300.0],
+            "target": [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 300.0],
+            "target_mode": "behavior_tree",
+        },
+        {
+            "name": "offset_loiter",
+            "weight": 0.5,
+            "ownship": [1000.0, -1000.0, -6800.0, 0.0, 0.0, 30.0, 280.0],
+            "target": [5000.0, 1000.0, -7200.0, 0.0, 0.0, 180.0, 270.0],
+            "target_mode": "loiter",
+            "target_loiter": {"enabled": True, "bank": 35.0, "pitch": 0.0},
+        },
+    ],
+    "ownship_randomization": {
+        "enabled": True,
+        "radius": 200.0,
+        "r_roll": 5.0,
+        "r_pitch": 5.0,
+        "r_heading": 15.0,
+        "speed_mps": 10.0,
+    },
+    "target_randomization": {
+        "enabled": True,
+        "radius": 200.0,
+        "r_roll": 5.0,
+        "r_pitch": 5.0,
+        "r_heading": 15.0,
+        "speed_mps": 10.0,
+    },
+    "shared_randomization": {
+        "enabled": True,
+        "n_m": 500.0,
+        "e_m": 500.0,
+        "d_m": 100.0,
+        "speed_mps": 5.0,
+    },
+}
+
 
 def get_stages() -> list[CurriculumStage]:
     """Return a small runnable curriculum example."""
@@ -54,17 +98,12 @@ def get_stages() -> list[CurriculumStage]:
             max_iterations=20,
             checkpoint_interval=5,
             reward_overrides={},
-            randomization={
-                "enabled": True,
-                "radius": 1500.0,
-                "r_roll": 10.0,
-                "r_pitch": 8.0,
-                "r_heading": 120.0,
-            },
+            randomization={"enabled": False},
+            env_overrides={"initial_scenario": MY_SCENARIO_POOL},
             advance_conditions={},
             advance_window=5,
         ),
     ]
 
 
-__all__ = ["get_stages"]
+__all__ = ["MY_SCENARIO_POOL", "get_stages"]

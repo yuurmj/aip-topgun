@@ -14,7 +14,7 @@ const COLORS = {
   sky: 0x7fb7d7,
 };
 
-const AIRCRAFT_MODEL_YAW_OFFSET_DEG = 180;
+const AIRCRAFT_MODEL_YAW_OFFSET_DEG = 0;
 const CAMERA_MODES = new Set(["blue", "red", "midpoint"]);
 
 const State = {
@@ -675,7 +675,7 @@ function attitudeMatrix(rollDeg, pitchDeg, yawDeg) {
   const cy = Math.cos(yaw);
   const sy = Math.sin(yaw);
   const rotX = [[1, 0, 0], [0, cr, -sr], [0, sr, cr]];
-  const rotY = [[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]];
+  const rotY = [[cp, 0, -sp], [0, 1, 0], [sp, 0, cp]];
   const rotZ = [[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]];
   return matmul3(matmul3(rotZ, rotY), rotX);
 }
