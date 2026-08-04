@@ -1,0 +1,16 @@
+{
+  "end_condition": "max time out",
+  "outcome": "timeout",
+  "ownship_health": 1.0,
+  "target_health": 1.0,
+  "damage_dealt_percent": 0.0,
+  "damage_received_percent": 0.0,
+  "ep_min_distance_m": 393.63386580792655,
+  "ep_mean_distance_m": 16391.31444797522,
+  "ep_wez_steps": 0,
+  "wez_entered": false,
+  "crashed": false,
+  "episode_steps": 600,
+  "final_ata_deg": 179.73368286699287,
+  "final_aa_deg": 7.520317133007128
+}
