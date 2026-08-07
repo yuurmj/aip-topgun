@@ -1,0 +1,61 @@
+name: team01_ppo_v18_875m_attack
+script: train_curriculum
+
+output:
+  name: team01
+  tag: ppo_mlp_v18_875m_attack
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v18
+
+algo:
+  name: ppo
+  framework: torch
+  # Conservative fine-tuning: preserve the v17 Stage-0 attack policy.
+  lr: 2.0e-5
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.05
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  num_env_runners: 1
+  save_lightweight_bundle: true
+  # Native restore keeps actor, value function, and optimizer state. Do not use
+  # the v17 final Stage model or a later Stage checkpoint.
+  restore_checkpoint: 'C:/Users/Ran/Desktop/2026/aip-topgun/01_Work/AIP_LIB/DogFightEnv/Release_260708/artifacts/curriculum/team01/ppo_mlp_v17_progressive_attack/stage_0_attack_anchor_750_850m_8s/checkpoints/iter_0006'
+
+curriculum:
+  stages_module: student.my_curriculum_v18
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 220
+  episodes: 4
+  print: true
+
+notes: >-
+  v18 is a single controlled 25 m extension from 850 m to 875 m. The scenario
+  pool is 850 m 70% and 875 m 30%, with ownship speed 264 m/s and target speed
+  250 m/s. The only initial model is the v17 Stage-0 iter_0006 native RLlib
+  checkpoint. The stage runs eight iterations, saves a native checkpoint and
+  engagement replay every iteration, and contains no scenario at 900 m or
+  farther. The minimum-altitude termination is relaxed to 6,550 m so the new
+  delta-based altitude, roll, and pitch recovery rewards can teach recovery.
