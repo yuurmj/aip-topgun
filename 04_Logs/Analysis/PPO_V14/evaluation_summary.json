@@ -1,0 +1,97 @@
+{
+  "labels": {
+    "PPO_V14": {
+      "episodes": 90,
+      "result_counts": {
+        "self_shot_kill": 6,
+        "timeout": 84
+      },
+      "self_shot_kills": 6,
+      "target_crashes": 0,
+      "ownship_crashes": 0,
+      "timeouts": 84,
+      "self_shot_kill_rate": 0.06666666666666667,
+      "ownship_crash_rate": 0.0,
+      "average_damage_dealt_percent": 14.057693390384028,
+      "average_damage_received_percent": 0.0,
+      "average_min_distance_m": 3487.3350781928643,
+      "minimum_altitude_m": 6295.907956800001,
+      "maximum_abs_roll_deg": 179.932,
+      "maximum_abs_pitch_deg": 27.22,
+      "official_wez_entries": 0,
+      "official_wez_observations": 0,
+      "calculated_wez_entries": 30,
+      "maximum_calculated_wez_hold_s": 0.6512999999999998,
+      "stages": {
+        "0": {
+          "episodes": 30,
+          "result_counts": {
+            "timeout": 30
+          },
+          "self_shot_kills": 0,
+          "target_crashes": 0,
+          "ownship_crashes": 0,
+          "timeouts": 30,
+          "self_shot_kill_rate": 0.0,
+          "ownship_crash_rate": 0.0,
+          "average_damage_dealt_percent": 0.0,
+          "average_damage_received_percent": 0.0,
+          "average_min_distance_m": 8903.56694640649,
+          "minimum_altitude_m": 6299.521665600001,
+          "maximum_abs_roll_deg": 89.22,
+          "maximum_abs_pitch_deg": 27.22,
+          "official_wez_entries": 0,
+          "official_wez_observations": 0,
+          "calculated_wez_entries": 0,
+          "maximum_calculated_wez_hold_s": 0.0
+        },
+        "1": {
+          "episodes": 30,
+          "result_counts": {
+            "self_shot_kill": 6,
+            "timeout": 24
+          },
+          "self_shot_kills": 6,
+          "target_crashes": 0,
+          "ownship_crashes": 0,
+          "timeouts": 24,
+          "self_shot_kill_rate": 0.2,
+          "ownship_crash_rate": 0.0,
+          "average_damage_dealt_percent": 42.17308017115208,
+          "average_damage_received_percent": 0.0,
+          "average_min_distance_m": 685.7354863445854,
+          "minimum_altitude_m": 6892.5237816,
+          "maximum_abs_roll_deg": 36.397,
+          "maximum_abs_pitch_deg": 10.534,
+          "official_wez_entries": 0,
+          "official_wez_observations": 0,
+          "calculated_wez_entries": 30,
+          "maximum_calculated_wez_hold_s": 0.6512999999999998
+        },
+        "2": {
+          "episodes": 30,
+          "result_counts": {
+            "timeout": 30
+          },
+          "self_shot_kills": 0,
+          "target_crashes": 0,
+          "ownship_crashes": 0,
+          "timeouts": 30,
+          "self_shot_kill_rate": 0.0,
+          "ownship_crash_rate": 0.0,
+          "average_damage_dealt_percent": 0.0,
+          "average_damage_received_percent": 0.0,
+          "average_min_distance_m": 872.7028018275173,
+          "minimum_altitude_m": 6295.907956800001,
+          "maximum_abs_roll_deg": 179.932,
+          "maximum_abs_pitch_deg": 22.534,
+          "official_wez_entries": 0,
+          "official_wez_observations": 0,
+          "calculated_wez_entries": 0,
+          "maximum_calculated_wez_hold_s": 0.0
+        }
+      }
+    }
+  },
+  "total_episodes": 90
+}
