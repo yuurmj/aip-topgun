@@ -16,8 +16,12 @@ __pycache__/
 .venv/
 venv/
 
+# macOS Finder metadata
+.DS_Store
+
 # 로그 및 임시 파일
 *.log
+analysis_output/
 
 # Large packaged viewer binaries
 DogFightViewer-Windows.ucas
