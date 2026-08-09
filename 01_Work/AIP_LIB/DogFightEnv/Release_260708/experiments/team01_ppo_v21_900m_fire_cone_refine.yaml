@@ -1,0 +1,70 @@
+name: team01_ppo_v21_900m_fire_cone_refine
+script: train_curriculum
+
+output:
+  name: team01
+  tag: ppo_mlp_v21_900m_fire_cone_refine
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v21
+
+algo:
+  name: ppo
+  framework: torch
+  # Keep the conservative PPO update settings. v21 changes only ATA/WEZ reward
+  # alignment to the simulator's actual firing cone and runs one iteration.
+  lr: 2.0e-5
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.05
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  num_env_runners: 1
+  save_lightweight_bundle: true
+  # Native v20 best checkpoint selected from the 900 m right-bias refinement.
+  # Do not use iter_0002, iter_0003, or final_bundle. Absolute path avoids the
+  # Ray/PyArrow relative-path URI error seen previously.
+  restore_checkpoint: "C:/Users/Ran/Desktop/2026/aip-topgun/01_Work/AIP_LIB/DogFightEnv/Release_260708/artifacts/curriculum/team01/ppo_mlp_v20_900m_attack_refine/stage_0_attack_refine_900m_right_bias_8s/checkpoints/iter_0001"
+
+curriculum:
+  stages_module: student.my_curriculum_v21
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 220
+  # More replay samples per checkpoint because the target of this run is
+  # direction-specific attack consistency, especially on the right side.
+  episodes: 12
+  print: true
+
+notes: >-
+  v21 is a single-iteration 900 m firing-cone refinement initialized only from
+  v20 stage-0 iter_0001. No distance beyond 900 m is included. Sampling remains
+  center 20%, left 30%, right 50%, with ownship speed 264 m/s, target speed
+  250 m/s, and an 8 s engagement window. Source inspection shows that actual
+  damage is applied only when abs(ATA) <= wez.angle_deg / 2; with the current
+  default wez.angle_deg=2.0, the firing half-angle is 1 degree. The v21 reward
+  therefore gives its strongest attack-posture and stable-WEZ shaping inside
+  that runtime firing cone, uses only small guidance out to 3 degrees, and
+  fades aim shaping to zero by 5 degrees. Damage, ATA-delta, altitude, roll,
+  pitch, and conditional-approach terms otherwise remain unchanged. The run is
+  limited to one PPO iteration with a native checkpoint and 12 engagement
+  replays saved for that iteration.
