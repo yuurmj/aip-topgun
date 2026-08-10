@@ -1,0 +1,74 @@
+name: team01_ppo_v22_general_dogfight_bridge
+script: train_curriculum
+
+output:
+  name: team01
+  tag: ppo_mlp_v22_general_dogfight_bridge
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v22
+  target_behavior_dll: AIP_BASE_target.dll
+
+algo:
+  name: ppo
+  framework: torch
+  # More conservative than v21 because this run broadens the state distribution.
+  # Two checkpoints are produced; iter_0002 is not automatically preferred.
+  lr: 1.0e-5
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.05
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  num_env_runners: 1
+  save_lightweight_bundle: true
+  # Start only from the validated v21 native checkpoint.  Use an absolute path
+  # because the installed Ray/PyArrow stack rejects the previous relative path.
+  restore_checkpoint: "C:/Users/Ran/Desktop/2026/aip-topgun/01_Work/AIP_LIB/DogFightEnv/Release_260708/artifacts/curriculum/team01/ppo_mlp_v21_900m_fire_cone_refine/stage_0_attack_refine_900m_fire_cone_8s/checkpoints/iter_0001"
+
+curriculum:
+  stages_module: student.my_curriculum_v22
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 520
+  # Use many replay samples because the stage deliberately mixes multiple
+  # geometries and target modes; these logs are for checkpoint selection.
+  episodes: 20
+  print: true
+
+notes: >-
+  v22 changes direction from distance-extension training to a general-dogfight
+  bridge. It starts only from the validated v21 iter_0001 native checkpoint and
+  uses one mixed stage so the common curriculum trainer does not cross a stage
+  boundary and replace native PPO state with a lightweight bundle. The scenario
+  pool keeps 25% of the validated 900 m autopilot attack rehearsal, adds 15% of
+  900 m tail chase against the active AIP_BASE behavior-tree target, and uses
+  the remaining 60% for mirrored alpha 0/20/40/60 geometries derived from the
+  competition code's two-circle placement formula. Small position/attitude/
+  speed perturbations reduce memorization of one BT opening. The reward keeps
+  v21's real firing-cone alignment, increases the penalty for ownship damage,
+  strengthens rear-hemisphere ATA improvement for post-merge reacquisition, and
+  removes tail-chase-specific absolute roll/pitch and 7,000 m hold penalties.
+  Safety shaping now focuses on genuinely low altitude plus uncontrolled dive.
+  PPO learning rate is reduced to 1e-5 and only two iterations are allowed;
+  iter_0001 and iter_0002 must be evaluated separately, and the final bundle is
+  not automatically considered the best model.

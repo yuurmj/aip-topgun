@@ -1,0 +1,179 @@
+# PPO + LSTM pilot branch.
+# This is a NEW recurrent policy branch and does NOT restore the v21 MLP checkpoint.
+# Official PPO-LSTM path: RLlib DefaultModelConfig(use_lstm=True), no SAC patch required.
+
+name: team01_ppo_lstm_v25_bootstrap
+script: train_rllib
+
+output:
+  name: team01
+  tag: ppo_lstm_v25_bootstrap
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v25_lstm
+  target_mode: behavior_tree
+  target_behavior_dll: AIP_BASE_target.dll
+  max_engage_time: 10.0
+  episode_step_limit: 600
+
+env_config:
+  step_ratio: 6
+  min_altitude: 300.0
+  geometry_guard:
+    enabled: false
+
+  # Fresh LSTM policy: keep most samples on the familiar close attack geometry,
+  # but include alpha-0 merges so recurrence sees temporal/reacquisition states.
+  initial_scenario:
+    mode: scenario_pool
+    scenarios:
+      # 70% easy/familiar 900 m autopilot attack.
+      - name: v25_lstm_900m_auto_center
+        weight: 0.14
+        ownship: [6900.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      - name: v25_lstm_900m_auto_left
+        weight: 0.21
+        ownship: [6899.7777503, -20.0, -7000.0, 0.0, 0.0, 179.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      - name: v25_lstm_900m_auto_right
+        weight: 0.35
+        ownship: [6899.7777503, 20.0, -7000.0, 0.0, 0.0, 180.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      # 15% same 900 m geometry against active BT.
+      - name: v25_lstm_900m_bt_center
+        weight: 0.03
+        ownship: [6900.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: behavior_tree
+
+      - name: v25_lstm_900m_bt_left
+        weight: 0.045
+        ownship: [6899.7777503, -20.0, -7000.0, 0.0, 0.0, 179.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: behavior_tree
+
+      - name: v25_lstm_900m_bt_right
+        weight: 0.075
+        ownship: [6899.7777503, 20.0, -7000.0, 0.0, 0.0, 180.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: behavior_tree
+
+      # 15% alpha-0 head-on merge, about 1371.6 m separation using the official
+      # two-circle formula midpoint (4500 ft separation contribution).
+      - name: v25_lstm_bt_alpha000
+        weight: 0.15
+        ownship: [2814.2, 0.0, -7000.0, 0.0, 0.0, 0.0, 280.0]
+        target:  [4185.8, 0.0, -7000.0, 0.0, 0.0, 180.0, 280.0]
+        target_mode: behavior_tree
+
+    ownship_randomization:
+      enabled: true
+      n_m: 10.0
+      e_m: 10.0
+      d_m: 5.0
+      r_roll: 1.0
+      r_pitch: 1.0
+      r_heading: 1.0
+      speed_mps: 1.0
+
+    target_randomization:
+      enabled: true
+      n_m: 10.0
+      e_m: 10.0
+      d_m: 5.0
+      r_roll: 1.0
+      r_pitch: 1.0
+      r_heading: 1.0
+      speed_mps: 1.0
+
+    shared_randomization:
+      enabled: true
+      n_m: 40.0
+      e_m: 40.0
+      d_m: 20.0
+      speed_mps: 1.0
+
+algo:
+  name: ppo
+  framework: torch
+
+  # Fresh recurrent model: larger than fine-tuning LR, but below the official
+  # PPO-LSTM template's 3e-4 to reduce early policy collapse.
+  lr: 1.0e-4
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.10
+
+  # Official PPO-LSTM route. No RLLibLstm SAC patch is needed for PPO.
+  lstm:
+    enabled: true
+    cell_size: 64
+    max_seq_len: 8
+    debug_io: false
+
+  # Match the official student_ppo_lstm template rather than the old v21 MLP.
+  mlp:
+    enabled: true
+    fcnet_hiddens: [128, 128]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  iterations: 12
+  num_env_runners: 1
+  num_envs_per_env_runner: 1
+  rollout_fragment_length: 8
+  batch_mode: truncate_episodes
+  save_lightweight_bundle: true
+  lightweight_bundle_frequency: 2
+  save_native_checkpoint: true
+  native_checkpoint_frequency: 2
+
+policy_probe:
+  enabled: true
+  interval: 2
+  steps: 8
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 2
+  steps: 600
+  episodes: 20
+  print: true
+
+notes: >-
+  v25 is a separate PPO+LSTM pilot branch trained from fresh recurrent weights.
+  It intentionally does not restore v21 because v21 is PPO+MLP and the native
+  checkpoint/model state is architecture-specific. The scenario distribution is
+  70% 900 m autopilot rehearsal, 15% 900 m active BT, and 15% alpha-0 BT merge.
+  The v24 hybrid reward is retained so close low-closure attack states use precision
+  shaping while high-closure/merge states allow combat maneuvering and reward
+  reacquisition. PPO-LSTM uses the official cell_size=64, max_seq_len=8 and
+  rollout_fragment_length=8 settings; lr=1e-4 and clip=0.10 are conservative
+  fresh-training values. Inspect checkpoints every 2 iterations rather than
+  automatically trusting iteration 12/final bundle.
