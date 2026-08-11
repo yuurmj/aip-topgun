@@ -1,0 +1,129 @@
+# PPO + LSTM v26 attack bootstrap.
+# Goal: teach the recurrent policy the validated 900 m gun solution FIRST.
+# This branch starts from fresh LSTM weights; it does not restore the PPO+MLP v21 checkpoint.
+
+name: team01_ppo_lstm_v26_attack_bootstrap
+script: train_rllib
+
+output:
+  name: team01
+  tag: ppo_lstm_v26_attack_bootstrap
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v26_lstm
+  target_mode: autopilot
+  target_behavior_dll: AIP_BASE_target.dll
+  max_engage_time: 8.0
+  episode_step_limit: 480
+
+env_config:
+  step_ratio: 6
+  min_altitude: 6550.0
+  geometry_guard:
+    enabled: false
+
+  # 100% familiar 900 m tail-chase attack.  No BT/head-on yet.
+  initial_scenario:
+    mode: scenario_pool
+    scenarios:
+      - name: v26_lstm_900m_auto_center
+        weight: 0.20
+        ownship: [6900.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      - name: v26_lstm_900m_auto_left
+        weight: 0.30
+        ownship: [6899.7777503, -20.0, -7000.0, 0.0, 0.0, 179.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      - name: v26_lstm_900m_auto_right
+        weight: 0.50
+        ownship: [6899.7777503, 20.0, -7000.0, 0.0, 0.0, 180.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+    # First teach the recurrent policy a clean gun solution; randomization comes later.
+    ownship_randomization:
+      enabled: false
+    target_randomization:
+      enabled: false
+    shared_randomization:
+      enabled: false
+
+algo:
+  name: ppo
+  framework: torch
+
+  # Fresh recurrent policy.  Faster than fine-tuning LR, but below the official
+  # PPO-LSTM baseline (3e-4) to reduce overshoot while learning the gun solution.
+  lr: 2.0e-4
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.15
+
+  lstm:
+    enabled: true
+    cell_size: 64
+    max_seq_len: 8
+    debug_io: false
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [128, 128]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  # This is fresh training, not checkpoint fine-tuning.  Save frequently and
+  # select the best checkpoint; do not automatically trust the final bundle.
+  iterations: 30
+  num_env_runners: 1
+  num_envs_per_env_runner: 1
+  rollout_fragment_length: 8
+  batch_mode: truncate_episodes
+  save_lightweight_bundle: true
+  lightweight_bundle_frequency: 2
+  save_native_checkpoint: true
+  native_checkpoint_frequency: 2
+
+policy_probe:
+  enabled: true
+  interval: 2
+  steps: 8
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 2
+  steps: 480
+  episodes: 12
+  print: true
+
+notes: >-
+  v26 is a fresh PPO+LSTM attack bootstrap.  It intentionally uses only the
+  validated 900 m center/left/right autopilot scenarios (20/30/50) and the
+  v21 firing-cone precision reward.  No behavior-tree or head-on scenario is
+  present in this phase.  The objective is to make the recurrent policy learn
+  sustained ATA <= the simulator firing half-angle and real target damage before
+  introducing active opponents.  Check bundles every 2 updates and choose the
+  earliest checkpoint that reaches strong 900 m damage/stability; then use that
+  checkpoint as the starting point for the next LSTM curriculum phase.

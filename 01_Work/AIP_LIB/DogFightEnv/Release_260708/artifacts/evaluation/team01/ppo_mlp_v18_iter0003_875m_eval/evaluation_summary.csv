@@ -1,0 +1,5 @@
+﻿group,episodes,crash_rate,damage_rate,mean_target_damage,mean_ata_deg,ata_within_5deg_rate,mean_abs_roll_deg,max_abs_roll_deg,mean_altitude_drop_m,pass_crash,pass_damage_rate,pass_mean_damage,pass_ata,pass_mean_roll,pass_max_roll,pass_altitude_drop,pass_all
+overall,15,0.0,0.7333333333333333,0.3223995365382136,2.0290861702570253,0.9433333333333334,9.712370833333331,39.06,54.710035360000134,True,False,True,True,True,True,True,False
+875m_center,5,0.0,1.0,0.43388933304161004,1.8852106466269416,0.905,8.069212499999999,27.601,75.97121712000008,True,True,True,True,True,True,True,True
+875m_left,5,0.0,0.6,0.3858728754353721,1.9694436492856724,0.9675,10.4721475,39.06,44.69209248000006,True,True,True,True,True,True,True,True
+875m_right,5,0.0,0.6,0.14743640113765885,2.2326042148584624,0.9574999999999999,10.5957525,33.942,43.46679648000027,True,True,False,True,True,True,True,False

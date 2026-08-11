@@ -1,0 +1,128 @@
+# PPO + LSTM v28 precision-gated refinement.
+# Resume from v26 checkpoint_000012. Aim first, stabilize only as ATA closes.
+
+name: team01_ppo_lstm_v28_precision_gate_refine
+script: train_rllib
+
+output:
+  name: team01
+  tag: ppo_lstm_v28_precision_gate_refine
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v28_lstm
+  target_mode: autopilot
+  target_behavior_dll: AIP_BASE_target.dll
+  max_engage_time: 8.0
+  episode_step_limit: 480
+
+env_config:
+  step_ratio: 6
+  min_altitude: 6550.0
+  geometry_guard:
+    enabled: false
+
+  # Keep the same clean 900 m gun task. Bias left slightly because it remains
+  # the weak side, but do not remove center/right coverage.
+  initial_scenario:
+    mode: scenario_pool
+    scenarios:
+      - name: v28_lstm_900m_auto_center
+        weight: 0.20
+        ownship: [6900.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      - name: v28_lstm_900m_auto_left
+        weight: 0.40
+        ownship: [6899.7777503, -20.0, -7000.0, 0.0, 0.0, 179.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      - name: v28_lstm_900m_auto_right
+        weight: 0.40
+        ownship: [6899.7777503, 20.0, -7000.0, 0.0, 0.0, 180.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+    ownship_randomization:
+      enabled: false
+    target_randomization:
+      enabled: false
+    shared_randomization:
+      enabled: false
+
+algo:
+  name: ppo
+  framework: torch
+
+  # v27 moved the policy too quickly toward stable-but-off-cone tracking.
+  # v28 uses half that LR and only three updates.
+  lr: 1.0e-5
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.05
+
+  lstm:
+    enabled: true
+    cell_size: 64
+    max_seq_len: 8
+    debug_io: false
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [128, 128]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  iterations: 3
+  num_env_runners: 1
+  num_envs_per_env_runner: 1
+  rollout_fragment_length: 8
+  batch_mode: truncate_episodes
+  save_lightweight_bundle: true
+  lightweight_bundle_frequency: 1
+  save_native_checkpoint: true
+  native_checkpoint_frequency: 1
+  restore_checkpoint: "C:/Users/Ran/Desktop/2026/aip-topgun/01_Work/AIP_LIB/DogFightEnv/Release_260708/artifacts/checkpoints/team01/ppo_lstm_v26_attack_bootstrap/checkpoint_000012"
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 8
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 480
+  episodes: 24
+  print: true
+
+notes: >-
+  v28 restarts refinement from v26 checkpoint_000012, not from v27. The task
+  remains 100% 900 m autopilot. Reward shaping is precision-gated: when ATA is
+  above 5 deg, posture penalties are largely relaxed so the policy can move the
+  nose; from 5 deg toward the true firing half-angle, roll/pitch stabilization
+  ramps in; inside the real firing cone, cone entry, continued cone hold, stable
+  posture, and actual target damage dominate. A small extreme-roll guard remains
+  outside the precision gate. PPO fine-tuning is deliberately very small
+  (lr=1e-5, clip=0.05, three updates). Compare every checkpoint and stop using
+  later checkpoints if ATA<=1 occupancy or real damage falls.

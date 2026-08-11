@@ -1,0 +1,60 @@
+name: team01_ppo_v16_attack_bridge
+script: train_curriculum
+
+output:
+  name: team01
+  tag: ppo_mlp_v16_attack_bridge
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v16
+
+algo:
+  name: ppo
+  framework: torch
+  # Conservative fine-tuning to avoid losing the existing attack policy.
+  lr: 5.0e-5
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.10
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  num_env_runners: 1
+  save_lightweight_bundle: true
+  # Start from the v15 Stage-1 bundle because that stage still produced damage.
+  init_bundle: artifacts/curriculum/team01/ppo_mlp_v15_entry_attack_refine/stage_1_stable_wez_hold_and_attack_8s/final_bundle
+
+curriculum:
+  stages_module: student.my_curriculum_v16
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 200
+  episodes: 3
+  print: true
+
+notes: >-
+  v16 starts from the v15 Stage-1 attack-capable bundle rather than the Stage-3
+  entry-only bundle. Every later stage continues to include easy WEZ-hold attack
+  episodes to prevent catastrophic forgetting. Entry-only reward is reduced,
+  while low-ATA tracking, actual firing steps, target damage, stable firing
+  range, and in-range no-fire penalties are strengthened. Stability continues
+  to use only confirmed ALT, ROLL, and PITCH indices. train_curriculum.py is not
+  modified.

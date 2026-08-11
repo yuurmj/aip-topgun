@@ -1,0 +1,61 @@
+name: team01_ppo_v15_entry_attack_refine
+script: train_curriculum
+
+output:
+  name: team01
+  tag: ppo_mlp_v15_entry_attack_refine
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v15
+
+algo:
+  name: ppo
+  framework: torch
+  # Lower than v14 to reduce policy collapse/catastrophic forgetting while
+  # fine-tuning the already learned entry behaviour.
+  lr: 1.0e-4
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.15
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  num_env_runners: 1
+  save_lightweight_bundle: true
+  # Installed by install_v15.ps1 from the uploaded v14 Stage-2 result.
+  init_bundle: artifacts/init_bundles/team01/ppo_mlp_v14_stage2_final
+
+curriculum:
+  stages_module: student.my_curriculum_v15
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 180
+  episodes: 3
+  print: true
+
+notes: >-
+  v15 refinement initialized from the v14 Stage-2 final bundle. Stage 0 repairs
+  altitude drift and large-roll instability. Stage 1 consolidates stable WEZ
+  hold and attack at 650-850 m. Stage 2 teaches near-WEZ entry from 950-1,150 m.
+  Stage 3 trains full 1,100-1,300 m entry, hold, and target damage. Stability
+  uses only confirmed ALT, ROLL, and PITCH indices. train_curriculum.py is not
+  modified. Official logs remain under artifacts/curriculum and helper scripts
+  mirror them to artifacts/logs/team01/ppo_mlp_v15_entry_attack_refine.

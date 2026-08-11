@@ -1,0 +1,126 @@
+# PPO + LSTM v27 precision refinement.
+# Continue from v26 checkpoint_000012 and improve stable 900 m gun tracking.
+
+name: team01_ppo_lstm_v27_attack_refine
+script: train_rllib
+
+output:
+  name: team01
+  tag: ppo_lstm_v27_attack_refine
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v27_lstm
+  target_mode: autopilot
+  target_behavior_dll: AIP_BASE_target.dll
+  max_engage_time: 8.0
+  episode_step_limit: 480
+
+env_config:
+  step_ratio: 6
+  min_altitude: 6550.0
+  geometry_guard:
+    enabled: false
+
+  # Keep the task familiar.  Shift weight toward the weak left case while
+  # retaining center/right so refinement does not overfit one direction.
+  initial_scenario:
+    mode: scenario_pool
+    scenarios:
+      - name: v27_lstm_900m_auto_center
+        weight: 0.20
+        ownship: [6900.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      - name: v27_lstm_900m_auto_left
+        weight: 0.40
+        ownship: [6899.7777503, -20.0, -7000.0, 0.0, 0.0, 179.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      - name: v27_lstm_900m_auto_right
+        weight: 0.40
+        ownship: [6899.7777503, 20.0, -7000.0, 0.0, 0.0, 180.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+    ownship_randomization:
+      enabled: false
+    target_randomization:
+      enabled: false
+    shared_randomization:
+      enabled: false
+
+algo:
+  name: ppo
+  framework: torch
+
+  # Fine-tuning, not bootstrap learning.  Keep PPO updates deliberately small.
+  lr: 2.0e-5
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.05
+
+  lstm:
+    enabled: true
+    cell_size: 64
+    max_seq_len: 8
+    debug_io: false
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [128, 128]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  iterations: 4
+  num_env_runners: 1
+  num_envs_per_env_runner: 1
+  rollout_fragment_length: 8
+  batch_mode: truncate_episodes
+  save_lightweight_bundle: true
+  lightweight_bundle_frequency: 1
+  save_native_checkpoint: true
+  native_checkpoint_frequency: 1
+  restore_checkpoint: "C:/Users/Ran/Desktop/2026/aip-topgun/01_Work/AIP_LIB/DogFightEnv/Release_260708/artifacts/checkpoints/team01/ppo_lstm_v26_attack_bootstrap/checkpoint_000012"
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 8
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 480
+  episodes: 24
+  print: true
+
+notes: >-
+  v27 fine-tunes the v26 PPO+LSTM checkpoint_000012 instead of starting fresh.
+  The task remains 100% familiar 900 m autopilot tail chase. Scenario weights
+  are center/left/right = 20/40/40 to strengthen the weak left-side solution.
+  The v26 firing-cone reward is retained with modestly stronger real-damage,
+  stable-cone hold, and large-roll suppression. PPO is deliberately conservative
+  (lr=2e-5, clip=0.05) for only four updates. Select the earliest checkpoint
+  that improves sustained damage and ATA<=1 occupancy without increasing roll
+  instability; do not automatically trust the final checkpoint.

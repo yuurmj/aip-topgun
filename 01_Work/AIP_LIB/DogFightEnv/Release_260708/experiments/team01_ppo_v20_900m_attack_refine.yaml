@@ -1,0 +1,67 @@
+name: team01_ppo_v20_900m_attack_refine
+script: train_curriculum
+
+output:
+  name: team01
+  tag: ppo_mlp_v20_900m_attack_refine
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v20
+
+algo:
+  name: ppo
+  framework: torch
+  # Keep v19's conservative PPO update settings so scenario distribution is
+  # the main experimental change in this refinement run.
+  lr: 2.0e-5
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.05
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  num_env_runners: 1
+  save_lightweight_bundle: true
+  # Native v19 best checkpoint. Do not restore v19 final_bundle or another
+  # iteration. Absolute path avoids the Ray/PyArrow relative-path URI error.
+  restore_checkpoint: "C:/Users/Ran/Desktop/2026/aip-topgun/01_Work/AIP_LIB/DogFightEnv/Release_260708/artifacts/curriculum/team01/ppo_mlp_v19_900m_attack/stage_0_attack_extension_875_900m_8s/checkpoints/iter_0004"
+
+curriculum:
+  stages_module: student.my_curriculum_v20
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 220
+  # More replay samples per checkpoint because the target of this run is
+  # direction-specific attack consistency, especially on the right side.
+  episodes: 12
+  print: true
+
+notes: >-
+  v20 is a short 900 m attack-consistency refinement initialized only from
+  v19 stage-0 iter_0004. No distance beyond 900 m is included. All scenarios
+  remain at exactly 900 m with ownship speed 264 m/s, target speed 250 m/s,
+  and an 8 s engagement window. Sampling is center 20%, left 30%, right 50%
+  because the dedicated v19 900 m evaluation showed strong center/left flight
+  stability but insufficient average target damage on the right. Reward
+  behavior and PPO hyperparameters are intentionally unchanged from v19; the
+  primary training change is the scenario distribution. The run is limited
+  to three iterations with a native checkpoint and 12 engagement replays
+  saved every iteration.
