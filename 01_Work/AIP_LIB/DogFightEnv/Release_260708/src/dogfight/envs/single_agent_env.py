@@ -18,6 +18,7 @@ import FighterSim
 import JSBSimWrapper
 from GeoMathUtil import GeometryInfo
 from dogfight.ai.action_provider import ActionContext
+from dogfight.ai.bt_action_provider import BTActionProvider
 from dogfight.ai.native_bt import AIPilot
 from dogfight.config import FEET_TO_METER, METER_TO_FEET, merge_env_config
 from dogfight.envs.observation import (
@@ -93,6 +94,14 @@ class DogFightEnv(gym.Env):
         self._target_action_provider = target_action_provider
 
         self.config = merge_env_config(env_config)
+        if (
+            self._target_action_provider is None
+            and self.config["target_mode"] == "behavior_tree"
+            and float(self.config.get("target_control_surface_scale", 1.0)) < 1.0
+        ):
+            self._target_action_provider = BTActionProvider(
+                dll_name=self.config["target_behavior_dll"]
+            )
         self._runner_index = self.config.get("_runner_index", "local")
         self._env_index = self.config.get("_env_index", 0)
         self._geo_info = GeometryInfo()
@@ -196,6 +205,8 @@ class DogFightEnv(gym.Env):
         # Episode-level accumulators (reset in reset())
         self._in_wez = False
         self._ep_wez_steps = 0
+        self._ep_consecutive_wez_steps = 0
+        self._ep_max_consecutive_wez_steps = 0
         self._ep_step_count = 0
         self._ep_distance_sum = 0.0
         self._ep_distance_min = float("inf")
@@ -213,6 +224,21 @@ class DogFightEnv(gym.Env):
     def _to_sim_action(self, rl_action: np.ndarray) -> np.ndarray:
         """Convert RL action space [-1,1]^4 → simulator format (throttle [0,1])."""
         a = np.clip(rl_action, -1.0, 1.0).astype(np.float32)
+        residual = self.config.get("residual_action", {})
+        if residual.get("enabled", False):
+            baseline = np.asarray(
+                residual.get("baseline", [0.0, 0.0, 0.0, 0.0]),
+                dtype=np.float32,
+            )
+            scale = np.asarray(
+                residual.get("scale", [1.0, 1.0, 1.0, 1.0]),
+                dtype=np.float32,
+            )
+            if baseline.shape != (4,) or scale.shape != (4,):
+                raise ValueError("residual_action baseline and scale must have 4 values")
+            a = np.clip(baseline + scale * a, -1.0, 1.0)
+        control_surface_scale = float(self.config.get("control_surface_scale", 1.0))
+        a[:3] *= np.clip(control_surface_scale, 0.0, 1.0)
         a[3] = (a[3] + 1.0) / 2.0                        # [-1,1] → [0,1]
         return np.clip(a, self._SIM_ACTION_LOW, self._SIM_ACTION_HIGH)
 
@@ -251,10 +277,24 @@ class DogFightEnv(gym.Env):
             self._apply_ref_old_random_initial_scenario(scenario)
         else:
             self._initial_scenario_metrics = {}
+            self._restore_default_initial_conditions()
+
+        target_speed_range = self.config.get("target_speed_range_mps")
+        if (
+            scenario_mode not in ("two_circle_headon", "ref_old_random")
+            and target_speed_range is not None
+        ):
+            sampled_target_speed = self.randomize_target_speed(target_speed_range)
+            self._initial_scenario_metrics["initial_target_speed_mps"] = (
+                sampled_target_speed
+            )
 
         # Apply per-episode position randomization if configured
         rand = self.config.get("ownship_randomization", {})
         if scenario_mode != "two_circle_headon" and rand.get("enabled", False):
+            distance_range = rand.get("distance_range_m")
+            if distance_range is not None:
+                self.randomize_initial_distance(distance_range)
             self.add_random_init_position(
                 "ownship",
                 radius=float(rand.get("radius", 0)),
@@ -269,6 +309,8 @@ class DogFightEnv(gym.Env):
         self._update_initial_geometry_metrics(scenario_mode)
         self.pre_obs = self.get_observation()
         self.info = {"end_condition": "", **self._initial_scenario_metrics}
+        self.ownship_log = []
+        self.target_log = []
         self.ownship_damage = 0.0
         self.target_damage = 0.0
         self.num_engage += 1
@@ -277,6 +319,8 @@ class DogFightEnv(gym.Env):
         # Reset episode accumulators
         self._in_wez = False
         self._ep_wez_steps = 0
+        self._ep_consecutive_wez_steps = 0
+        self._ep_max_consecutive_wez_steps = 0
         self._ep_step_count = 0
         self._ep_distance_sum = 0.0
         self._ep_distance_min = float("inf")
@@ -338,6 +382,7 @@ class DogFightEnv(gym.Env):
             "reward_components": components,
             "ep_reward_components": dict(self._ep_reward_components),
             "ep_wez_steps": self._ep_wez_steps,
+            "ep_max_consecutive_wez_steps": self._ep_max_consecutive_wez_steps,
             "ep_step_count": self._ep_step_count,
             "ep_mean_distance": ep_mean_dist,
             "ep_min_distance": ep_min_dist,
@@ -369,17 +414,19 @@ class DogFightEnv(gym.Env):
         for _ in range(int(self._step_ratio)):
             self._step_controlled_aircraft(action)
             if np.isnan(self._sim.get_state()).any():
-                info = {"end_condition": "Ownship FDM output Fall", "outcome": "crash"}
-                self._ep_step_count += 1
-                self._print_episode_termination(info["end_condition"])
-                return np.array(self.pre_obs, dtype=np.float32), 0.0, True, False, info
+                return self._finish_fdm_failure(
+                    action,
+                    end_condition="Ownship FDM output Fall",
+                    outcome="crash",
+                )
 
             self._step_target_aircraft()
             if np.isnan(self._target_sim.get_state()).any():
-                info = {"end_condition": "Target FDM output Fall", "outcome": "other"}
-                self._ep_step_count += 1
-                self._print_episode_termination(info["end_condition"])
-                return np.array(self.pre_obs, dtype=np.float32), 0.0, True, False, info
+                return self._finish_fdm_failure(
+                    action,
+                    end_condition="Target FDM output Fall",
+                    outcome="win",
+                )
 
             self.update_damage()
             ownship_damage_total += float(self.ownship_damage)
@@ -392,6 +439,55 @@ class DogFightEnv(gym.Env):
         self.target_damage = target_damage_total
         self._in_wez = in_wez_any
         return None
+
+    def _finish_fdm_failure(
+        self,
+        action: np.ndarray,
+        *,
+        end_condition: str,
+        outcome: str,
+    ) -> tuple[np.ndarray, float, bool, bool, Dict]:
+        """Finish an FDM failure through the normal reward/metric contract."""
+        reward, components = self._compute_step_reward(True, False, end_condition)
+        ep_mean_dist, ep_min_dist = self._update_episode_metrics(
+            action,
+            reward,
+            components,
+        )
+        ownship_health = float(self._ownship_state[StateIndex.HEALTH])
+        target_health = float(self._target_state[StateIndex.HEALTH])
+        self.info = {
+            "end_condition": end_condition,
+            "outcome": outcome,
+            "ownship_damage": self.ownship_damage,
+            "target_damage": self.target_damage,
+            "ownship_health": ownship_health,
+            "target_health": target_health,
+            "reward_components": components,
+            "ep_reward_components": dict(self._ep_reward_components),
+            "ep_wez_steps": self._ep_wez_steps,
+            "ep_max_consecutive_wez_steps": self._ep_max_consecutive_wez_steps,
+            "ep_step_count": self._ep_step_count,
+            "ep_mean_distance": ep_mean_dist,
+            "ep_min_distance": ep_min_dist,
+            "ep_altitude_penalty_steps": self._ep_altitude_penalty_steps,
+            "final_ata_deg": abs(float(self._geo_info._get_antenna_train_angle(
+                self._ownship_state, self._target_state, True
+            ))),
+            "final_aa_deg": abs(float(self._geo_info._get_aspect_angle(
+                self._ownship_state, self._target_state, True
+            ))),
+            "headon_guard_fail": False,
+            **self._initial_scenario_metrics,
+        }
+        self._print_episode_termination(end_condition)
+        return (
+            np.array(self.pre_obs, dtype=np.float32),
+            reward,
+            True,
+            False,
+            dict(self.info),
+        )
 
     @staticmethod
     def _classify_outcome(
@@ -406,8 +502,17 @@ class DogFightEnv(gym.Env):
                 return "win"
             if ownship_health <= 0.0 < target_health:
                 return "loss"
-            if end_condition in ("ownship altitude below min", "FDM Update Fail"):
+            if end_condition in (
+                "ownship altitude below min",
+                "Ownship FDM output Fall",
+                "FDM Update Fail",
+            ):
                 return "crash"
+            if end_condition in (
+                "target altitude below min",
+                "Target FDM output Fall",
+            ):
+                return "win"
             if end_condition == "two circle headon guard fail":
                 return "loss"
             return "draw"
@@ -448,7 +553,18 @@ class DogFightEnv(gym.Env):
         self._ep_distance_min = min(self._ep_distance_min, distance)
         if self._in_wez:
             self._ep_wez_steps += 1
-        if components.get("safety", 0.0) < 0.0:
+            self._ep_consecutive_wez_steps += 1
+            self._ep_max_consecutive_wez_steps = max(
+                self._ep_max_consecutive_wez_steps,
+                self._ep_consecutive_wez_steps,
+            )
+        else:
+            self._ep_consecutive_wez_steps = 0
+        safety_reward = float(components.get("safety", 0.0)) + sum(
+            float(components.get(key, 0.0))
+            for key in ("altitude", "dive", "bank")
+        )
+        if safety_reward < 0.0:
             self._ep_altitude_penalty_steps += 1
         for k, v in components.items():
             self._ep_reward_components[k] = self._ep_reward_components.get(k, 0.0) + v
@@ -485,7 +601,12 @@ class DogFightEnv(gym.Env):
                 self.pre_obs,
             )
             result = self._ownship_action_provider.compute_action(context)
-            self._sim.step(result.action)
+            provider_action = (
+                self._to_sim_action(result.action)
+                if result.source == "rl"
+                else result.action
+            )
+            self._sim.step(provider_action)
             return
 
         control_mode = self.config["ownship_control_mode"]
@@ -509,7 +630,7 @@ class DogFightEnv(gym.Env):
                 self.pre_obs,
             )
             result = self._target_action_provider.compute_action(context)
-            self._target_sim.step(result.action)
+            self._target_sim.step(self._scale_target_action(result.action))
             return
 
         target_mode = self.config["target_mode"]
@@ -529,6 +650,13 @@ class DogFightEnv(gym.Env):
             )
         else:
             self._target_sim.step_fix()
+
+    def _scale_target_action(self, action: np.ndarray) -> np.ndarray:
+        """Limit target BT maneuver authority while preserving its throttle."""
+        scaled = np.asarray(action, dtype=np.float32).copy()
+        scale = float(self.config.get("target_control_surface_scale", 1.0))
+        scaled[:3] *= np.clip(scale, 0.0, 1.0)
+        return np.clip(scaled, self._SIM_ACTION_LOW, self._SIM_ACTION_HIGH)
 
     def get_observation(self):
         return self._build_observation_for(self._ownship_state, self._target_state)
@@ -667,6 +795,79 @@ class DogFightEnv(gym.Env):
         fighter._init_pos_lat = lla[0]
         fighter._init_pos_lon = lla[1]
         fighter._init_pos_alt = lla[2]
+
+    def _restore_default_initial_conditions(self) -> None:
+        """Restore configured default geometry before per-episode jitter."""
+        for flight in ("ownship", "target"):
+            values = list(self.config[flight])
+            if len(values) < 7:
+                raise ValueError(f"{flight} initial condition requires 7 values")
+            self.change_init_position(
+                flight=flight,
+                init_n=float(values[0]),
+                init_e=float(values[1]),
+                init_d=float(values[2]),
+                init_roll=float(values[3]),
+                init_pitch=float(values[4]),
+                init_heading=float(values[5]),
+                init_speed=float(values[6]),
+            )
+
+    def randomize_initial_distance(self, distance_range_m) -> float:
+        """Set ownship separation along the baseline LOS without changing its angle."""
+        minimum, maximum = self._range_values(distance_range_m)
+        if minimum <= 0.0 or maximum < minimum:
+            raise ValueError(
+                "distance_range_m must be a positive [minimum, maximum] range"
+            )
+        desired = float(self.np_random.uniform(minimum, maximum))
+        ownship = np.asarray(
+            [
+                self._sim._init_pos_n,
+                self._sim._init_pos_e,
+                self._sim._init_pos_d,
+            ],
+            dtype=np.float64,
+        )
+        target = np.asarray(
+            [
+                self._target_sim._init_pos_n,
+                self._target_sim._init_pos_e,
+                self._target_sim._init_pos_d,
+            ],
+            dtype=np.float64,
+        )
+        line_of_sight = ownship - target
+        baseline_distance = float(np.linalg.norm(line_of_sight))
+        if baseline_distance <= 1.0e-9:
+            raise ValueError("cannot randomize distance for coincident aircraft")
+        position = target + line_of_sight / baseline_distance * desired
+        self._sim._init_pos_n = float(position[0])
+        self._sim._init_pos_e = float(position[1])
+        self._sim._init_pos_d = float(position[2])
+        lla = pm.ned2geodetic(
+            self._sim._init_pos_n,
+            self._sim._init_pos_e,
+            self._sim._init_pos_d,
+            self._sim._origin_lat,
+            self._sim._origin_lon,
+            self._sim._origin_alt,
+        )
+        self._sim._init_pos_lat = lla[0]
+        self._sim._init_pos_lon = lla[1]
+        self._sim._init_pos_alt = lla[2]
+        return desired
+
+    def randomize_target_speed(self, speed_range_mps) -> float:
+        """Sample target initial speed without changing any other initial state."""
+        minimum, maximum = self._range_values(speed_range_mps)
+        if minimum <= 0.0 or maximum < minimum:
+            raise ValueError(
+                "target_speed_range_mps must be a positive [minimum, maximum] range"
+            )
+        sampled = float(self.np_random.uniform(minimum, maximum))
+        self._target_sim._init_speed = sampled
+        return sampled
 
     def _apply_two_circle_headon_initial_scenario(self, scenario: dict) -> None:
         """Place both aircraft on the paper's two-circle head-on curriculum."""
@@ -890,13 +1091,19 @@ class DogFightEnv(gym.Env):
 
     def add_random_init_position(self, flight="ownship", radius=500.0, r_roll=5, r_pitch=5, r_heading=5):
         fighter = self._sim if flight == "ownship" else self._target_sim
-        sign = np.array([-1.0, 1.0])
-        fighter._init_pos_n += float(self.np_random.choice(sign) * self.np_random.integers(0, radius))
-        fighter._init_pos_e += float(self.np_random.choice(sign) * self.np_random.integers(0, radius))
-        fighter._init_pos_d += float(self.np_random.choice(sign) * self.np_random.integers(0, radius))
-        fighter._init_roll += float(self.np_random.choice(sign) * self.np_random.integers(0, r_roll))
-        fighter._init_pitch += float(self.np_random.choice(sign) * self.np_random.integers(0, r_pitch))
-        fighter._init_heading += float(self.np_random.choice(sign) * self.np_random.integers(0, r_heading))
+
+        def jitter(bound) -> float:
+            upper = float(bound)
+            if upper <= 0:
+                return 0.0
+            return float(self.np_random.uniform(-upper, upper))
+
+        fighter._init_pos_n += jitter(radius)
+        fighter._init_pos_e += jitter(radius)
+        fighter._init_pos_d += jitter(radius)
+        fighter._init_roll += jitter(r_roll)
+        fighter._init_pitch += jitter(r_pitch)
+        fighter._init_heading += jitter(r_heading)
 
         if fighter._init_roll > 180:
             fighter._init_roll -= 360

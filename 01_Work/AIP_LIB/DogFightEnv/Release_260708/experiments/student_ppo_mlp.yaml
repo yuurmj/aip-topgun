@@ -15,7 +15,7 @@ env:
   observation_mode: tactical16
   # observation_mode: custom
   # observation_module: student.my_observation
-  target_mode: fixed
+  target_mode: behavior_tree ###수정(fixed -> bt : DDL 전투 활성화를 위함)
   target_behavior_dll: AIP_BASE_target.dll
   # reward_module: student.my_reward
   max_engage_time: 60.0
@@ -32,6 +32,10 @@ env_config:
     win_reward: 100.0
     loss_reward: -100.0
     draw_reward: -30.0
+  wez: ###수정(SAC와 동일하게 wez 조건 명시)
+    angle_deg: 2.0
+    min_range_m: 152.4
+    max_range_m: 914.4
 
 # 2) 알고리즘 + 3) 하이퍼파라미터 + 5) MLP 신경망
 algo:

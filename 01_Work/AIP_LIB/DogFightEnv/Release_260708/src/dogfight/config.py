@@ -16,7 +16,18 @@ DEFAULT_ENV_CONFIG = {
     "min_altitude": 300.0,
     "observation_mode": "classic12",
     "ownship_control_mode": "rl",
+    # Curriculum-only multiplier for roll/pitch/yaw authority.
+    "control_surface_scale": 1.0,
+    # Optional safe residual mapping in RL action space. When enabled, the
+    # policy only supplies a bounded correction around a stable baseline.
+    "residual_action": {
+        "enabled": False,
+        "baseline": [0.0, 0.0, 0.0, 0.0],
+        "scale": [1.0, 1.0, 1.0, 1.0],
+    },
     "target_mode": "behavior_tree",
+    # Curriculum-only multiplier for target BT roll/pitch/rudder authority.
+    "target_control_surface_scale": 1.0,
     "ownship_behavior_dll": None,
     "target_behavior_dll": "AIP_BASE_target.dll",
     "target_loiter": {"enabled": True, "bank": 30.0, "pitch": 0.0},
@@ -40,10 +51,15 @@ DEFAULT_ENV_CONFIG = {
     },
     "ownship": [1000.0, 0.0, -7000.0, 0.0, 0.0, 0.0, 300.0],
     "target": [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 300.0],
+    # Optional per-episode target speed range for one-axis curriculum expansion.
+    "target_speed_range_mps": None,
     "artifacts_dir": "artifacts/logs",
     # Per-episode position randomization (used by curriculum; disabled by default)
     "ownship_randomization": {
         "enabled": False,
+        # Exact initial separation range along the baseline line of sight.
+        # None preserves the configured ownship/target separation.
+        "distance_range_m": None,
         "radius": 0.0,      # NED position scatter radius (meters)
         "r_roll": 0.0,      # roll scatter (degrees)
         "r_pitch": 0.0,     # pitch scatter (degrees)

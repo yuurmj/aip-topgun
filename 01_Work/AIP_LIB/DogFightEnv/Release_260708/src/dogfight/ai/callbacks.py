@@ -9,8 +9,9 @@ class DogFightCallbacks(DefaultCallbacks):
 
     Metrics recorded in episode.custom_metrics (auto-aggregated by RLlib):
       Outcome    : win, loss, draw, timeout, crash
-      Reward     : ep_reward_{step,pursuit,damage,safety,terminal}
-      Tactical   : ep_wez_steps, ep_mean_distance, ep_min_distance,
+      Reward     : ep_reward_{step,survival,altitude,dive,bank,pursuit,damage,terminal}
+      Tactical   : ep_wez_steps, ep_max_consecutive_wez_steps,
+                   ep_mean_distance, ep_min_distance,
                    ep_altitude_penalty_steps, initial/final ATA/AA,
                    headon_guard_fail
       Action     : action_{roll,pitch,rudder,throttle}_{mean,std},
@@ -51,6 +52,12 @@ class DogFightCallbacks(DefaultCallbacks):
         # ── Tactical metrics ──────────────────────────────────────────────
         self._record_metric(
             episode, metrics_logger, "ep_wez_steps", float(info.get("ep_wez_steps", 0))
+        )
+        self._record_metric(
+            episode,
+            metrics_logger,
+            "ep_max_consecutive_wez_steps",
+            float(info.get("ep_max_consecutive_wez_steps", 0)),
         )
         self._record_metric(
             episode,

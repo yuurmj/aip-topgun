@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
+import gzip
+import pickle
+
 import numpy as np
 
 from dogfight.ai.action_provider import ActionContext, ActionProvider, ActionResult, clip_action
@@ -166,6 +169,167 @@ class RLActionProvider(ActionProvider):
             f"state_out={_state_shape_summary(state_out)}"
         )
         self._debug_lstm_prints += 1
+
+
+class DirectSACMLPActionProvider(ActionProvider):
+    """Run a standard SAC MLP actor directly without constructing RLlib/Ray."""
+
+    _WEIGHT_KEYS = (
+        "pi_encoder.net.mlp.0.weight",
+        "pi_encoder.net.mlp.0.bias",
+        "pi_encoder.net.mlp.2.weight",
+        "pi_encoder.net.mlp.2.bias",
+        "pi.net.mlp.0.weight",
+        "pi.net.mlp.0.bias",
+    )
+
+    def __init__(
+        self,
+        bundle_dir: str,
+        policy_id: str = "default_policy",
+        confidence: float = 0.9,
+    ) -> None:
+        import torch
+
+        bundle_path = Path(bundle_dir)
+        self.metadata, _ = load_lightweight_policy_bundle(bundle_path)
+        with gzip.open(bundle_path / "policy_weights.pkl.gz", "rb") as handle:
+            weights = pickle.load(handle)
+        missing = [key for key in self._WEIGHT_KEYS if key not in weights]
+        if missing:
+            raise ValueError(
+                "Direct SAC MLP inference requires standard actor weights; "
+                f"missing={missing}"
+            )
+
+        activation = str(
+            self.metadata.get("algorithm_config", {})
+            .get("model_config", {})
+            .get("fcnet_activation", "relu")
+        ).lower()
+        if activation != "relu":
+            raise ValueError(
+                "Direct SAC MLP inference currently supports relu actors only, "
+                f"got {activation!r}"
+            )
+
+        self.policy_id = policy_id
+        self.confidence = confidence
+        self._torch = torch
+        self._weights = {
+            key: torch.as_tensor(weights[key], dtype=torch.float32)
+            for key in self._WEIGHT_KEYS
+        }
+
+    def reset(self, context: ActionContext | None = None) -> None:
+        return None
+
+    def compute_action(self, context: ActionContext) -> ActionResult:
+        import torch.nn.functional as functional
+
+        if context.observation is None:
+            raise ValueError("observation is required for direct SAC MLP inference")
+        tensor = self._torch.as_tensor(
+            np.asarray(context.observation, dtype=np.float32),
+            dtype=self._torch.float32,
+        )
+        with self._torch.no_grad():
+            tensor = functional.relu(
+                functional.linear(
+                    tensor,
+                    self._weights["pi_encoder.net.mlp.0.weight"],
+                    self._weights["pi_encoder.net.mlp.0.bias"],
+                )
+            )
+            tensor = functional.relu(
+                functional.linear(
+                    tensor,
+                    self._weights["pi_encoder.net.mlp.2.weight"],
+                    self._weights["pi_encoder.net.mlp.2.bias"],
+                )
+            )
+            logits = functional.linear(
+                tensor,
+                self._weights["pi.net.mlp.0.weight"],
+                self._weights["pi.net.mlp.0.bias"],
+            )
+            action = self._torch.tanh(logits[:4]).cpu().numpy()
+        return ActionResult(
+            action=clip_action(action),
+            source="rl",
+            confidence=self.confidence,
+            info={"policy_id": self.policy_id, "explore": False, "direct_sac_mlp": True},
+        )
+
+    def close(self) -> None:
+        return None
+
+
+class AltitudeRecoveryActionProvider(ActionProvider):
+    """Use a second policy below a guarded altitude with hysteresis."""
+
+    def __init__(
+        self,
+        primary: ActionProvider,
+        recovery: ActionProvider,
+        *,
+        trigger_altitude_m: float,
+        release_altitude_m: float,
+        primary_bias: np.ndarray | None = None,
+    ) -> None:
+        if trigger_altitude_m <= 0.0:
+            raise ValueError("trigger_altitude_m must be positive")
+        if release_altitude_m <= trigger_altitude_m:
+            raise ValueError("release_altitude_m must exceed trigger_altitude_m")
+        self.primary = primary
+        self.recovery = recovery
+        self.trigger_altitude_m = float(trigger_altitude_m)
+        self.release_altitude_m = float(release_altitude_m)
+        self.primary_bias = np.asarray(
+            np.zeros(4, dtype=np.float32) if primary_bias is None else primary_bias,
+            dtype=np.float32,
+        )
+        if self.primary_bias.shape != (4,):
+            raise ValueError("primary_bias must contain four values")
+        self._recovery_active = False
+
+    def reset(self, context: ActionContext | None = None) -> None:
+        self._recovery_active = False
+        self.primary.reset(context)
+        self.recovery.reset(context)
+
+    def compute_action(self, context: ActionContext) -> ActionResult:
+        if context.ownship_state is None:
+            raise ValueError("ownship_state is required for altitude recovery")
+        state = np.asarray(context.ownship_state)
+        altitude_m = float(state[44])
+        if altitude_m <= 0.0:
+            altitude_m = -float(state[2])
+        if self._recovery_active:
+            self._recovery_active = altitude_m < self.release_altitude_m
+        else:
+            self._recovery_active = altitude_m <= self.trigger_altitude_m
+
+        if self._recovery_active:
+            result = self.recovery.compute_action(context)
+            return ActionResult(
+                action=result.action,
+                source=result.source,
+                confidence=result.confidence,
+                info={**result.info, "altitude_recovery": True},
+            )
+
+        result = self.primary.compute_action(context)
+        return ActionResult(
+            action=clip_action(np.asarray(result.action) + self.primary_bias),
+            source=result.source,
+            confidence=result.confidence,
+            info={**result.info, "altitude_recovery": False},
+        )
+
+    def close(self) -> None:
+        self.primary.close()
+        self.recovery.close()
 
 
 def _to_numpy_action(action) -> np.ndarray:
