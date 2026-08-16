@@ -1,0 +1,127 @@
+name: team01_sac_mlp_v2_full_geometry_wez_a627_transition_state_curriculum
+script: train_rllib
+output: {name: team01, tag: sac_mlp_v2_full_geometry_wez_a627_transition_state_curriculum}
+
+env:
+  observation_mode: tactical25
+  target_mode: behavior_tree
+  target_behavior_dll: AIP_BASE_target.dll
+  reward_module: student.sac_wez_sync_reward_v7
+  max_engage_time: 10.0
+  episode_step_limit: 600
+
+env_config:
+  episode_seed_cycle: [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010]
+  canonicalize_negative_target_bank: true
+  step_ratio: 6
+  min_altitude: 300.0
+  control_surface_scale: 1.0
+  target_altitude_guard: {enabled: true, trigger_altitude_m: 3500.0, release_altitude_m: 5000.0, roll_level_gain: 0.02, pull_up_action: -1.0, throttle_action: 1.0}
+  pursuit_guidance_residual:
+    enabled: true
+    residual_scale: [0.20, 0.20, 0.20, 0.05]
+    near_residual_scale: [0.30, 0.30, 0.30, 0.05]
+    near_distance_m: 1200.0
+    near_ata_deg: 20.0
+    max_bank_deg: 70.0
+    heading_to_bank: 2.5
+    roll_gain: 0.002
+    pitch_gain: 0.05
+    capture_pitch_gain: 0.3
+    pitch_command_sign: -1.0
+    rudder_gain: 0.0
+    lead_time_s: 12.0
+    brake_range_m: 1800.0
+    brake_heading_error_deg: 10.0
+    near_throttle_action: -1.0
+    capture_range_m: 1100.0
+    capture_heading_error_deg: 90.0
+    capture_lead_time_s: 1.0
+    capture_bank_scale: 0.15
+    capture_target_bank_blend: 0.50
+    capture_target_bank_blend_start_ata_deg: 15.0
+    capture_roll_delta_damping: 0.50
+    proximity_speed_match_start_distance_m: 1400.0
+    proximity_speed_match_gain: 0.02
+    proximity_speed_match_min_overspeed_mps: 20.0
+    proximity_speed_match_max_ata_deg: 10.0
+    proximity_speed_match_latch: true
+    suppress_opposing_roll_heading_error_deg: 12.0
+    opposing_roll_guidance_scale: 4.0
+  ownship: [0.0, 0.0, -6046.703, -36.881, 53.022, 317.412, 366.194]
+  target: [282.588, -229.173, -6370.048, 100.484, 78.466, 212.284, 349.251]
+  ownship_randomization:
+    enabled: true
+    distance_range_m: [440.0, 540.0]
+    radius: 0.05
+    r_roll: 3.0
+    r_pitch: 2.0
+    r_heading: 2.0
+  wez: {angle_deg: 20.0, min_range_m: 152.4, max_range_m: 914.4}
+  reward:
+    ownship_crash_reward: -120.0
+    loss_reward: -120.0
+    target_crash_reward: 0.0
+    timeout_reward: -10.0
+    draw_reward: -10.0
+    damage_scale: 40.0
+    altitude_warning_m: 4000.0
+    altitude_floor_m: 300.0
+    altitude_risk_scale: 0.50
+    dive_penalty_scale: 0.20
+    excess_bank_deg: 85.0
+    excess_bank_scale: 0.01
+    pursuit_scale: 0.0
+    closure_scale: 0.5
+    closure_reference_mps: 300.0
+    alignment_scale: 3.0
+    range_scale: 0.5
+    range_reference_m: 2000.0
+    moving_alignment_scale: 4.0
+    moving_alignment_reference_deg: 30.0
+    fine_alignment_scale: 2.0
+    fine_alignment_reference_deg: 15.0
+    wez_hold_scale: 400.0
+    wez_progress_scale: 300.0
+    wez_required_steps: 10
+    wez_milestone_bonus: 600.0
+    wez_miss_penalty: -60.0
+    sync_range_m: 1200.0
+    sync_ata_gate_deg: 20.0
+    bank_match_scale: 0.0
+    heading_match_scale: 0.0
+    speed_match_scale: 1.0
+    speed_match_reference_mps: 50.0
+
+algo:
+  name: sac
+  framework: torch
+  lr: 3.0e-4
+  actor_lr: 5.0e-6
+  critic_lr: 3.0e-4
+  alpha_lr: 5.0e-6
+  gamma: 0.995
+  train_batch_size: 256
+  minibatch_size: 256
+  tau: 0.005
+  target_entropy: auto
+  replay_buffer_capacity: 20000
+  learning_starts: 200
+  mlp: {enabled: true, fcnet_hiddens: [256, 256], fcnet_activation: relu, head_fcnet_hiddens: [], head_fcnet_activation: relu}
+
+runtime:
+  iterations: 12
+  num_env_runners: 0
+  num_envs_per_env_runner: 1
+  rollout_fragment_length: auto
+  batch_mode: truncate_episodes
+  save_lightweight_bundle: true
+  lightweight_bundle_frequency: 2
+  save_native_checkpoint: true
+  native_checkpoint_frequency: 12
+  init_bundle: artifacts/models/team01/sac_mlp_v2_full_geometry_wez_a505_guarded_speedplus40_60s/bundle_000004
+
+dashboard: {enabled: true, logdir: artifacts/dashboard}
+policy_probe: {enabled: true, interval: 2, steps: 4, print: true}
+engagement_log: {enabled: false}
+notes: "A627 replays the real seed-1007 pre-WEZ high-pitch/high-bank transition instead of a generic aligned hold state."

@@ -1,58 +1,58 @@
 {
-  "created_at": "2026-05-19T13:50:58",
-  "python": "C:\\Users\\USER\\anaconda3\\envs\\aip\\python.exe",
-  "input_path": "C:\\Users\\USER\\anaconda3\\envs\\aip",
-  "rllib_root": "C:\\Users\\USER\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib",
+  "created_at": "2026-08-14T18:15:14",
+  "python": "C:\\Users\\shwsr\\anaconda3\\envs\\aip\\python.exe",
+  "input_path": "C:\\Users\\shwsr\\anaconda3\\envs\\aip",
+  "rllib_root": "C:\\Users\\shwsr\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib",
   "ray_version": "2.54.0",
   "expected_ray_version": "2.54.0",
   "patch_marker": "DogFightEnv SAC actor/recurrent-Q LSTM patch",
   "dry_run": false,
-  "backup_dir": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\tools\\backups\\aip_20260519_135058",
+  "backup_dir": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\tools\\backups\\aip_20260814_181514",
   "files": {
     "algorithms/sac/default_sac_rl_module.py": {
-      "source": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\ray_2_54_0_patched\\ray\\rllib\\algorithms\\sac\\default_sac_rl_module.py",
-      "target": "C:\\Users\\USER\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib\\algorithms\\sac\\default_sac_rl_module.py",
-      "backup": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\tools\\backups\\aip_20260519_135058\\default_sac_rl_module.py.e82bb129206c.bak",
-      "original_sha256": "e82bb129206c8b85717d0594b8284b8e02a84209b04ac687983a20bcca5ba61a",
+      "source": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\ray_2_54_0_patched\\ray\\rllib\\algorithms\\sac\\default_sac_rl_module.py",
+      "target": "C:\\Users\\shwsr\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib\\algorithms\\sac\\default_sac_rl_module.py",
+      "backup": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\tools\\backups\\aip_20260814_181514\\default_sac_rl_module.py.91a84a252b58.bak",
+      "original_sha256": "91a84a252b58823d7330cfa72d601f88674d3dec436c4c9e9b7b17ccf2af38ab",
       "source_sha256": "e82bb129206c8b85717d0594b8284b8e02a84209b04ac687983a20bcca5ba61a",
       "patched_sha256": "e82bb129206c8b85717d0594b8284b8e02a84209b04ac687983a20bcca5ba61a",
-      "changed": false
+      "changed": true
     },
     "algorithms/sac/sac_catalog.py": {
-      "source": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\ray_2_54_0_patched\\ray\\rllib\\algorithms\\sac\\sac_catalog.py",
-      "target": "C:\\Users\\USER\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib\\algorithms\\sac\\sac_catalog.py",
-      "backup": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\tools\\backups\\aip_20260519_135058\\sac_catalog.py.2290875ae6fb.bak",
-      "original_sha256": "2290875ae6fbe83f16b51da05efbe98851747270f0ff64d5b4a6b126d8c983b8",
+      "source": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\ray_2_54_0_patched\\ray\\rllib\\algorithms\\sac\\sac_catalog.py",
+      "target": "C:\\Users\\shwsr\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib\\algorithms\\sac\\sac_catalog.py",
+      "backup": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\tools\\backups\\aip_20260814_181514\\sac_catalog.py.826b335c2276.bak",
+      "original_sha256": "826b335c22767cfa2fe974965aa9cd1c8758aae28dac4d10e7cd2be5545d6bb4",
       "source_sha256": "3de9116fa7fa30299d5b9b7bb7231a41571210fca73a8e33d47078408db9abcd",
       "patched_sha256": "3de9116fa7fa30299d5b9b7bb7231a41571210fca73a8e33d47078408db9abcd",
       "changed": true
     },
     "algorithms/sac/torch/default_sac_torch_rl_module.py": {
-      "source": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\ray_2_54_0_patched\\ray\\rllib\\algorithms\\sac\\torch\\default_sac_torch_rl_module.py",
-      "target": "C:\\Users\\USER\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib\\algorithms\\sac\\torch\\default_sac_torch_rl_module.py",
-      "backup": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\tools\\backups\\aip_20260519_135058\\default_sac_torch_rl_module.py.e9362adbc354.bak",
-      "original_sha256": "e9362adbc3543f362798b3c2a93933704540aee11fbdbb667092c623a89b64b6",
+      "source": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\ray_2_54_0_patched\\ray\\rllib\\algorithms\\sac\\torch\\default_sac_torch_rl_module.py",
+      "target": "C:\\Users\\shwsr\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib\\algorithms\\sac\\torch\\default_sac_torch_rl_module.py",
+      "backup": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\tools\\backups\\aip_20260814_181514\\default_sac_torch_rl_module.py.044dfda71fb3.bak",
+      "original_sha256": "044dfda71fb3476a50967ad27bdea12b7a78a2923dc82da3be8fbe53d272b08e",
       "source_sha256": "e9362adbc3543f362798b3c2a93933704540aee11fbdbb667092c623a89b64b6",
       "patched_sha256": "e9362adbc3543f362798b3c2a93933704540aee11fbdbb667092c623a89b64b6",
-      "changed": false
+      "changed": true
     },
     "algorithms/sac/torch/sac_torch_learner.py": {
-      "source": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\ray_2_54_0_patched\\ray\\rllib\\algorithms\\sac\\torch\\sac_torch_learner.py",
-      "target": "C:\\Users\\USER\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib\\algorithms\\sac\\torch\\sac_torch_learner.py",
-      "backup": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\tools\\backups\\aip_20260519_135058\\sac_torch_learner.py.57eea79f39d7.bak",
-      "original_sha256": "57eea79f39d71c9a21f76588ffcd0cac7b79607f8068844cea046aceaa78a87f",
+      "source": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\ray_2_54_0_patched\\ray\\rllib\\algorithms\\sac\\torch\\sac_torch_learner.py",
+      "target": "C:\\Users\\shwsr\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib\\algorithms\\sac\\torch\\sac_torch_learner.py",
+      "backup": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\tools\\backups\\aip_20260814_181514\\sac_torch_learner.py.48c7d51ad9e0.bak",
+      "original_sha256": "48c7d51ad9e0b75f237b2c6161cc07f1a2de85a8602e965cd7500301be2e2384",
       "source_sha256": "57eea79f39d71c9a21f76588ffcd0cac7b79607f8068844cea046aceaa78a87f",
       "patched_sha256": "57eea79f39d71c9a21f76588ffcd0cac7b79607f8068844cea046aceaa78a87f",
-      "changed": false
+      "changed": true
     },
     "utils/replay_buffers/prioritized_episode_buffer.py": {
-      "source": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\ray_2_54_0_patched\\ray\\rllib\\utils\\replay_buffers\\prioritized_episode_buffer.py",
-      "target": "C:\\Users\\USER\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib\\utils\\replay_buffers\\prioritized_episode_buffer.py",
-      "backup": "C:\\Users\\USER\\workspace\\DogFightEnv\\RLLibLstm\\tools\\backups\\aip_20260519_135058\\prioritized_episode_buffer.py.025e29b94003.bak",
-      "original_sha256": "025e29b94003ab43e6e59d733d450fd5ee577c678f2c3af2b74518cd1b002d00",
+      "source": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\ray_2_54_0_patched\\ray\\rllib\\utils\\replay_buffers\\prioritized_episode_buffer.py",
+      "target": "C:\\Users\\shwsr\\anaconda3\\envs\\aip\\Lib\\site-packages\\ray\\rllib\\utils\\replay_buffers\\prioritized_episode_buffer.py",
+      "backup": "C:\\dev\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\RLLibLstm\\tools\\backups\\aip_20260814_181514\\prioritized_episode_buffer.py.68e33f302957.bak",
+      "original_sha256": "68e33f30295749303ea21a3422c7f9182a5a29ad107d422452bb028c88ffdaa0",
       "source_sha256": "025e29b94003ab43e6e59d733d450fd5ee577c678f2c3af2b74518cd1b002d00",
       "patched_sha256": "025e29b94003ab43e6e59d733d450fd5ee577c678f2c3af2b74518cd1b002d00",
-      "changed": false
+      "changed": true
     }
   }
 }

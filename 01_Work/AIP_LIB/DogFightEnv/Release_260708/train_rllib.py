@@ -51,6 +51,10 @@ def _ensure_ray_runtime_env() -> None:
 
     # 2026-05-29: Give slower PCs more time for raylet/GCS startup after shutdown.
     os.environ.setdefault("RAY_raylet_start_wait_time_s", _RAY_RAYLET_START_WAIT_TIME_S)
+    ray_init_kwargs = {}
+    configured_num_cpus = os.environ.get("AIP_RAY_NUM_CPUS")
+    if configured_num_cpus:
+        ray_init_kwargs["num_cpus"] = int(configured_num_cpus)
     ray.shutdown()
     ray.init(
         ignore_reinit_error=True,
@@ -63,6 +67,7 @@ def _ensure_ray_runtime_env() -> None:
                 ],
             }
         },
+        **ray_init_kwargs,
     )
 
 
@@ -548,7 +553,7 @@ def parse_args():
     parser.add_argument(
         "--observation-mode",
         default="tactical16",
-        choices=["classic12", "relative14", "tactical16", "custom"],
+        choices=["classic12", "relative14", "tactical16", "tactical17", "tactical21", "tactical25", "custom"],
     )
     parser.add_argument(
         "--observation-module",
@@ -1241,7 +1246,17 @@ def main():
         _run_with_tune(args, algorithm_name, config, env_config)
         return
 
-    algorithm = config.build_algo()
+    from ray.tune.logger import UnifiedLogger
+
+    rllib_log_dir = (
+        ROOT / "artifacts" / "logs" / args.output_name / args.output_tag / "rllib"
+    )
+    rllib_log_dir.mkdir(parents=True, exist_ok=True)
+
+    def _logger_creator(logger_config):
+        return UnifiedLogger(logger_config, str(rllib_log_dir), loggers=None)
+
+    algorithm = config.build_algo(logger_creator=_logger_creator)
     if args.restore_checkpoint:
         checkpoint_path = Path(args.restore_checkpoint)
         if not checkpoint_path.exists():

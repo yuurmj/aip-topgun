@@ -10,6 +10,8 @@ import numpy as np
 
 from dogfight.ai.action_provider import ActionContext, ActionProvider, ActionResult, clip_action
 from dogfight.ai.checkpoint_io import load_lightweight_policy_bundle
+from dogfight.sim.state_schema import StateIndex
+from dogfight.envs.observation import mirror_tactical_observation
 
 
 class RLActionProvider(ActionProvider):
@@ -263,6 +265,320 @@ class DirectSACMLPActionProvider(ActionProvider):
 
     def close(self) -> None:
         return None
+
+
+class ObservationFeedbackActionProvider(ActionProvider):
+    """Add a bounded linear observation feedback term to a policy action."""
+
+    def __init__(
+        self,
+        primary: ActionProvider,
+        *,
+        observation_index: int,
+        action_gains: np.ndarray,
+    ) -> None:
+        self.primary = primary
+        self.observation_index = int(observation_index)
+        self.action_gains = np.asarray(action_gains, dtype=np.float32)
+        if self.action_gains.shape != (4,):
+            raise ValueError("action_gains must contain four values")
+
+    def reset(self, context: ActionContext | None = None) -> None:
+        self.primary.reset(context)
+
+    def compute_action(self, context: ActionContext) -> ActionResult:
+        if context.observation is None:
+            raise ValueError("observation is required for observation feedback")
+        observation = np.asarray(context.observation, dtype=np.float32)
+        if not 0 <= self.observation_index < observation.size:
+            raise IndexError(
+                f"observation index {self.observation_index} is outside "
+                f"a {observation.size}-element observation"
+            )
+        result = self.primary.compute_action(context)
+        feedback = float(observation[self.observation_index]) * self.action_gains
+        return ActionResult(
+            action=clip_action(np.asarray(result.action) + feedback),
+            source=result.source,
+            confidence=result.confidence,
+            info={
+                **result.info,
+                "observation_feedback": feedback.tolist(),
+            },
+        )
+
+    def close(self) -> None:
+        self.primary.close()
+
+
+class TargetBankActionScaleProvider(ActionProvider):
+    """Scale an existing policy's roll/rudder commands by observed target bank."""
+
+    def __init__(
+        self,
+        primary: ActionProvider,
+        *,
+        reference_bank_deg: float = 30.0,
+        roll_exponent: float = 1.0,
+        rudder_exponent: float = 1.0,
+        minimum_scale: float = 0.5,
+        maximum_scale: float = 2.5,
+    ) -> None:
+        if reference_bank_deg <= 0.0:
+            raise ValueError("reference_bank_deg must be positive")
+        self.primary = primary
+        self.reference_bank_deg = float(reference_bank_deg)
+        self.roll_exponent = float(roll_exponent)
+        self.rudder_exponent = float(rudder_exponent)
+        self.minimum_scale = float(minimum_scale)
+        self.maximum_scale = float(maximum_scale)
+
+    def reset(self, context: ActionContext | None = None) -> None:
+        self.primary.reset(context)
+
+    def compute_action(self, context: ActionContext) -> ActionResult:
+        result = self.primary.compute_action(context)
+        if context.target_state is None:
+            return result
+        target_roll = (
+            float(context.target_state[StateIndex.ROLL]) + 180.0
+        ) % 360.0 - 180.0
+        ratio = max(abs(target_roll) / self.reference_bank_deg, 0.0)
+        roll_scale = float(np.clip(
+            ratio ** self.roll_exponent,
+            self.minimum_scale,
+            self.maximum_scale,
+        ))
+        rudder_scale = float(np.clip(
+            ratio ** self.rudder_exponent,
+            self.minimum_scale,
+            self.maximum_scale,
+        ))
+        action = np.asarray(result.action, dtype=np.float32).copy()
+        action[0] *= roll_scale
+        action[2] *= rudder_scale
+        return ActionResult(
+            action=clip_action(action),
+            source=result.source,
+            confidence=result.confidence,
+            info={
+                **result.info,
+                "target_bank_action_scale": True,
+                "target_bank_deg": target_roll,
+                "target_bank_roll_scale": roll_scale,
+                "target_bank_rudder_scale": rudder_scale,
+            },
+        )
+
+    def close(self) -> None:
+        self.primary.close()
+
+
+class NegativeTargetBankCanonicalActionProvider(ActionProvider):
+    """Mirror negative-turn observations into the actor's positive-turn frame."""
+
+    def __init__(self, primary: ActionProvider) -> None:
+        self.primary = primary
+
+    def reset(self, context: ActionContext | None = None) -> None:
+        self.primary.reset(context)
+
+    def compute_action(self, context: ActionContext) -> ActionResult:
+        if context.target_state is None or context.observation is None:
+            return self.primary.compute_action(context)
+        target_roll = (
+            float(context.target_state[StateIndex.ROLL]) + 180.0
+        ) % 360.0 - 180.0
+        if target_roll >= 0.0:
+            return self.primary.compute_action(context)
+
+        observation = mirror_tactical_observation(context.observation)
+        mirrored_context = ActionContext(
+            sim=context.sim,
+            opponent_sim=context.opponent_sim,
+            ownship_state=context.ownship_state,
+            target_state=context.target_state,
+            observation=observation,
+            info=context.info,
+        )
+        result = self.primary.compute_action(mirrored_context)
+        action = np.asarray(result.action, dtype=np.float32).copy()
+        action[[0, 2]] *= -1.0
+        return ActionResult(
+            action=clip_action(action),
+            source=result.source,
+            confidence=result.confidence,
+            info={
+                **result.info,
+                "negative_target_bank_canonicalized": True,
+                "target_bank_deg": target_roll,
+            },
+        )
+
+    def close(self) -> None:
+        self.primary.close()
+
+
+class CanonicalTargetBankActionRestoreProvider(ActionProvider):
+    """Restore actor actions when the environment already mirrors observations."""
+
+    def __init__(self, primary: ActionProvider) -> None:
+        self.primary = primary
+
+    def reset(self, context: ActionContext | None = None) -> None:
+        self.primary.reset(context)
+
+    def compute_action(self, context: ActionContext) -> ActionResult:
+        result = self.primary.compute_action(context)
+        if context.target_state is None:
+            return result
+        target_roll = (
+            float(context.target_state[StateIndex.ROLL]) + 180.0
+        ) % 360.0 - 180.0
+        if target_roll >= 0.0:
+            return result
+        action = np.asarray(result.action, dtype=np.float32).copy()
+        action[[0, 2]] *= -1.0
+        return ActionResult(
+            action=clip_action(action),
+            source=result.source,
+            confidence=result.confidence,
+            info={
+                **result.info,
+                "canonical_target_bank_action_restored": True,
+                "target_bank_deg": target_roll,
+            },
+        )
+
+    def close(self) -> None:
+        self.primary.close()
+
+
+class BundleMappedDirectSACActionProvider(ActionProvider):
+    """Run a direct SAC actor and return simulator-mapped bundle actions."""
+
+    def __init__(
+        self,
+        bundle_dir: str,
+        *,
+        policy_bias: np.ndarray | None = None,
+    ) -> None:
+        self.primary = DirectSACMLPActionProvider(bundle_dir=bundle_dir)
+        self.env_config = dict(
+            self.primary.metadata.get("algorithm_config", {}).get("env_config", {})
+        )
+        self.observation_mode = str(
+            self.env_config.get("observation_mode", "tactical16")
+        )
+        self.policy_bias = np.asarray(
+            np.zeros(4, dtype=np.float32) if policy_bias is None else policy_bias,
+            dtype=np.float32,
+        )
+        if self.policy_bias.shape != (4,):
+            raise ValueError("policy_bias must contain four values")
+
+    def reset(self, context: ActionContext | None = None) -> None:
+        self.primary.reset(context)
+
+    def _adapt_observation(self, observation: np.ndarray) -> np.ndarray:
+        observation = np.asarray(observation, dtype=np.float32)
+        # tactical21 is tactical17 plus four target-maneuver features, and
+        # tactical25 appends four angular-rate features. Older bundles must not
+        # receive columns they were not trained to consume.
+        if observation.size == 25 and self.observation_mode in {
+            "tactical16",
+            "tactical17",
+            "tactical21",
+        }:
+            observation = observation[:21]
+        if observation.size == 21 and self.observation_mode in {
+            "tactical16",
+            "tactical17",
+        }:
+            observation = observation[:17]
+        if self.observation_mode == "tactical16" and observation.size == 17:
+            yaw_deg = np.degrees(
+                np.arctan2(float(observation[2]), float(observation[3]))
+            ) % 360.0
+            tactical16 = np.empty(16, dtype=np.float32)
+            tactical16[0:2] = observation[0:2]
+            tactical16[2] = yaw_deg / 180.0 - 1.0
+            tactical16[3:] = observation[4:]
+            return tactical16
+        if self.observation_mode == "tactical17" and observation.size == 16:
+            yaw_rad = (float(observation[2]) + 1.0) * np.pi
+            tactical17 = np.empty(17, dtype=np.float32)
+            tactical17[0:2] = observation[0:2]
+            tactical17[2] = np.sin(yaw_rad)
+            tactical17[3] = np.cos(yaw_rad)
+            tactical17[4:] = observation[3:]
+            return tactical17
+        if self.observation_mode == "tactical21" and observation.size in {16, 17}:
+            if observation.size == 16:
+                yaw_rad = (float(observation[2]) + 1.0) * np.pi
+                tactical17 = np.empty(17, dtype=np.float32)
+                tactical17[0:2] = observation[0:2]
+                tactical17[2] = np.sin(yaw_rad)
+                tactical17[3] = np.cos(yaw_rad)
+                tactical17[4:] = observation[3:]
+                observation = tactical17
+            tactical21 = np.zeros(21, dtype=np.float32)
+            tactical21[:17] = observation
+            return tactical21
+        if self.observation_mode == "tactical25" and observation.size in {16, 17, 21}:
+            if observation.size in {16, 17}:
+                original_mode = self.observation_mode
+                self.observation_mode = "tactical21"
+                try:
+                    observation = self._adapt_observation(observation)
+                finally:
+                    self.observation_mode = original_mode
+            tactical25 = np.zeros(25, dtype=np.float32)
+            tactical25[:21] = observation
+            return tactical25
+        return observation
+
+    def _map_action(self, action: np.ndarray) -> np.ndarray:
+        mapped = np.clip(action, -1.0, 1.0).astype(np.float32)
+        residual = self.env_config.get("residual_action", {})
+        if bool(residual.get("enabled", False)):
+            baseline = np.asarray(residual["baseline"], dtype=np.float32)
+            scale = np.asarray(residual["scale"], dtype=np.float32)
+            mapped = np.clip(baseline + scale * mapped, -1.0, 1.0)
+        mapped[:3] *= np.clip(
+            float(self.env_config.get("control_surface_scale", 1.0)),
+            0.0,
+            1.0,
+        )
+        mapped[3] = (mapped[3] + 1.0) / 2.0
+        return clip_action(mapped)
+
+    def compute_action(self, context: ActionContext) -> ActionResult:
+        adapted_context = ActionContext(
+            sim=context.sim,
+            opponent_sim=context.opponent_sim,
+            ownship_state=context.ownship_state,
+            target_state=context.target_state,
+            observation=self._adapt_observation(context.observation),
+            info=context.info,
+        )
+        result = self.primary.compute_action(adapted_context)
+        biased_action = clip_action(
+            np.asarray(result.action, dtype=np.float32) + self.policy_bias
+        )
+        return ActionResult(
+            action=self._map_action(biased_action),
+            source="bundle_mapped",
+            confidence=result.confidence,
+            info={
+                **result.info,
+                "bundle_action_mapped": True,
+                "bundle_policy_bias": self.policy_bias.tolist(),
+            },
+        )
+
+    def close(self) -> None:
+        self.primary.close()
 
 
 class AltitudeRecoveryActionProvider(ActionProvider):

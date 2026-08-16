@@ -1,0 +1,105 @@
+name: team01_sac_mlp_v2_wez_a49_heading1
+script: train_rllib
+
+output: {name: team01, tag: sac_mlp_v2_wez_a49_heading1}
+
+env:
+  observation_mode: tactical16
+  target_mode: loiter
+  target_behavior_dll: AIP_BASE_target.dll
+  reward_module: student.sac_moving_target_reward_v5
+  max_engage_time: 20.0
+  episode_step_limit: 1200
+
+env_config:
+  step_ratio: 6
+  min_altitude: 300.0
+  control_surface_scale: 1.0
+  residual_action:
+    enabled: true
+    baseline: [0.12, -0.0065, 0.06, -0.20]
+    scale: [0.10, 0.10, 0.10, 0.05]
+  ownship: [1000.0, 0.0, -7000.0, 0.0, 0.0, 0.0, 350.0]
+  target: [1950.0, 0.0, -7000.0, 0.0, 0.0, 0.0, 200.0]
+  target_loiter: {enabled: true, bank: 30.0, pitch: 0.0}
+  ownship_randomization:
+    enabled: true
+    distance_range_m: [925.0, 1200.0]
+    radius: 0.5
+    r_roll: 0.0
+    r_pitch: 0.0
+    r_heading: 1.0
+  wez: {angle_deg: 2.0, min_range_m: 152.4, max_range_m: 914.4}
+  reward:
+    step_penalty: -0.01
+    survival_bonus: 0.05
+    win_reward: 100.0
+    loss_reward: -100.0
+    ownship_crash_reward: -120.0
+    target_crash_reward: 100.0
+    timeout_reward: -30.0
+    draw_reward: -10.0
+    guard_fail_penalty: -100.0
+    damage_scale: 100.0
+    altitude_warning_m: 2000.0
+    altitude_floor_m: 300.0
+    altitude_risk_scale: 0.10
+    dive_penalty_scale: 0.05
+    dive_reference_deg: 45.0
+    excess_bank_deg: 60.0
+    excess_bank_scale: 0.02
+    pursuit_scale: 0.0
+    pursuit_half_angle_deg: 60.0
+    pursuit_range_m: 8000.0
+    altitude_hold_target_m: 7000.0
+    altitude_hold_range_m: 3000.0
+    altitude_hold_scale: 0.20
+    level_pitch_scale: 0.20
+    level_roll_scale: 0.05
+    closure_scale: 0.10
+    closure_reference_mps: 300.0
+    alignment_scale: 0.30
+    range_scale: 0.10
+    range_reference_m: 8000.0
+    wez_hold_scale: 3.0
+    fine_alignment_scale: 1.0
+    fine_alignment_reference_deg: 2.0
+    moving_alignment_scale: 1.0
+    moving_alignment_reference_deg: 5.0
+
+algo:
+  name: sac
+  framework: torch
+  lr: 3.0e-4
+  actor_lr: 3.0e-6
+  critic_lr: 3.0e-4
+  alpha_lr: 1.0e-5
+  gamma: 0.999
+  train_batch_size: 256
+  minibatch_size: 256
+  tau: 0.005
+  target_entropy: auto
+  replay_buffer_capacity: 10000
+  learning_starts: 1000
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+
+runtime:
+  iterations: 30
+  num_env_runners: 0
+  num_envs_per_env_runner: 1
+  rollout_fragment_length: auto
+  batch_mode: truncate_episodes
+  save_lightweight_bundle: true
+  lightweight_bundle_frequency: 2
+  save_native_checkpoint: false
+  init_bundle: artifacts/models/team01/sac_mlp_v2_wez_a48_heading0p5/bundle_000028
+
+dashboard: {enabled: true, logdir: artifacts/dashboard}
+policy_probe: {enabled: true, interval: 2, steps: 4, print: true}
+engagement_log: {enabled: false}
+notes: "A49 exact first-failure curriculum: preserve A48 bundle 28 while closing the two-seed WEZ miss at heading jitter 1 degree."

@@ -1,0 +1,17 @@
+[
+  {
+    "max_value": -0.01,
+    "action_gains": [17.0, 0.0, 0.0, 0.0],
+    "action_bias": [0.0, 0.0, -0.5, 0.0]
+  },
+  {
+    "max_value": 0.0,
+    "action_gains": [25.0, 0.0, 0.0, 0.0],
+    "action_bias": [0.0, 0.005, -0.005, 0.0]
+  },
+  {
+    "max_value": null,
+    "action_gains": [50.0, 0.0, 0.0, 0.0],
+    "action_bias": [0.0, 0.022, -0.005, 0.0]
+  }
+]

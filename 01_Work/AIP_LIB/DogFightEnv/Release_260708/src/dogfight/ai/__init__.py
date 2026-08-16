@@ -11,7 +11,12 @@ from .dashboard_logger import (
 from .hybrid_action_provider import HybridActionProvider
 from .native_bt import AIPilot
 from .rl_action_provider import RLActionProvider
-from .rllib_utils import build_algorithm_from_bundle, build_algorithm_config, normalize_algorithm_name
+from .rllib_utils import (
+    build_algorithm_from_bundle,
+    build_algorithm_config,
+    build_sac_lstm_module_from_bundle,
+    normalize_algorithm_name,
+)
 from .training_record import save_training_record
 
 __all__ = [
@@ -26,6 +31,7 @@ __all__ = [
     "RLActionProvider",
     "build_algorithm_config",
     "build_algorithm_from_bundle",
+    "build_sac_lstm_module_from_bundle",
     "load_lightweight_policy_bundle",
     "normalize_algorithm_name",
     "save_lightweight_policy_bundle",

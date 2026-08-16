@@ -13,6 +13,9 @@ class StateIndex(IntEnum):
     U = 6
     V = 7
     W = 8
+    P = 9
+    Q = 10
+    R = 11
     KCAS = 12
     FUEL = 23
     SIM_TIME = 41
