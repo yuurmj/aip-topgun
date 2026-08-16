@@ -26,7 +26,7 @@ def _repo_root() -> Path:
 
 def _prepare_imports() -> Path:
     root = _repo_root()
-    mytrain = root / "DogFightEnv" / "MyTrainEnv"
+    mytrain = root if (root / "src").is_dir() else root / "DogFightEnv" / "MyTrainEnv"
     sys.path.insert(0, str(mytrain))
     sys.path.insert(0, str(mytrain / "src"))
     return mytrain
@@ -72,17 +72,21 @@ def _build_module_from_metadata(metadata: dict):
     lstm_cell_size = payload_metadata.get("lstm_cell_size", 64)
     max_seq_len = payload_metadata.get("max_seq_len", 8)
 
-    model_config = asdict(
-        DefaultModelConfig(
-            fcnet_hiddens=[256, 256],
-            fcnet_activation="relu",
-            head_fcnet_hiddens=[],
-            head_fcnet_activation="relu",
-            use_lstm=True,
-            max_seq_len=int(max_seq_len),
-            lstm_cell_size=int(lstm_cell_size),
+    saved_model_config = payload_metadata.get("model_config")
+    if isinstance(saved_model_config, dict) and saved_model_config:
+        model_config = dict(saved_model_config)
+    else:
+        model_config = asdict(
+            DefaultModelConfig(
+                fcnet_hiddens=[256, 256],
+                fcnet_activation="relu",
+                head_fcnet_hiddens=[],
+                head_fcnet_activation="relu",
+                use_lstm=True,
+                max_seq_len=int(max_seq_len),
+                lstm_cell_size=int(lstm_cell_size),
+            )
         )
-    )
     model_config["twin_q"] = True
 
     module = RLModuleSpec(
@@ -113,6 +117,9 @@ def _infer_obs_size(env_config: dict) -> int:
         "classic12": 12,
         "relative14": 14,
         "tactical16": 16,
+        "tactical17": 17,
+        "tactical21": 21,
+        "tactical25": 25,
         "legacy37": 37,
     }.get(mode, 16)
 
@@ -152,7 +159,13 @@ def main() -> None:
 
     bundle_dir = Path(args.bundle_dir)
     metadata, _ = load_lightweight_policy_bundle(bundle_dir)
-    obs_size = metadata.get("observation_summary", {}).get("size") or 16
+    payload_metadata = metadata.get("metadata", {})
+    observation_summary = payload_metadata.get("observation_summary") or {}
+    obs_size = (
+        observation_summary.get("size")
+        or payload_metadata.get("observation_size")
+        or _infer_obs_size(metadata.get("algorithm_config", {}).get("env_config", {}))
+    )
 
     def algorithm_factory(bundle_metadata: dict):
         return _FakeAlgorithm(_build_module_from_metadata(bundle_metadata))

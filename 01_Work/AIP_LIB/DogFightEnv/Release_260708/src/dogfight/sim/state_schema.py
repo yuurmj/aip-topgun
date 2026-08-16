@@ -10,6 +10,12 @@ class StateIndex(IntEnum):
     ROLL = 3
     PITCH = 4
     YAW = 5
+    U = 6
+    V = 7
+    W = 8
+    P = 9
+    Q = 10
+    R = 11
     KCAS = 12
     FUEL = 23
     SIM_TIME = 41

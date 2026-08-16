@@ -1,0 +1,5 @@
+{"step": 100.0, "episode/count": 0.0, "replay/memory_mb": 1.3811044692993164, "perf/iteration_time_s": 1.4553024768829346}
+{"step": 200.0, "episode/count": 0.0, "replay/memory_mb": 1.394993782043457, "perf/iteration_time_s": 1.5514566898345947}
+{"step": 300.0, "episode/count": 0.0, "replay/memory_mb": 1.4041681289672852, "perf/iteration_time_s": 1.647841453552246}
+{"step": 400.0, "episode/count": 0.0, "replay/memory_mb": 1.4251337051391602, "perf/iteration_time_s": 1.9347660541534424}
+{"step": 500.0, "episode/count": 0.0, "replay/memory_mb": 1.435807228088379, "perf/iteration_time_s": 1.6408882141113281}

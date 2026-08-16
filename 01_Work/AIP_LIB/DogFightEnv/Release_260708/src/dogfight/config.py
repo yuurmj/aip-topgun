@@ -16,7 +16,35 @@ DEFAULT_ENV_CONFIG = {
     "min_altitude": 300.0,
     "observation_mode": "classic12",
     "ownship_control_mode": "rl",
+    # Curriculum-only multiplier for roll/pitch/yaw authority.
+    "control_surface_scale": 1.0,
+    # Optional safe residual mapping in RL action space. When enabled, the
+    # policy only supplies a bounded correction around a stable baseline.
+    "residual_action": {
+        "enabled": False,
+        "baseline": [0.0, 0.0, 0.0, 0.0],
+        "scale": [1.0, 1.0, 1.0, 1.0],
+    },
+    # Optional curriculum teacher. The SAC action is a bounded residual around
+    # deterministic pursuit guidance and the same config is saved in bundles.
+    "pursuit_guidance_residual": {
+        "enabled": False,
+        "residual_scale": [0.25, 0.25, 0.25, 0.10],
+    },
+    # Optional deterministic residual controller applied to the policy action.
+    # Kept disabled unless a curriculum bundle explicitly opts in.
+    "observation_action_feedback": {
+        "enabled": False,
+        "observation_index": 0,
+        "action_gains": [0.0, 0.0, 0.0, 0.0],
+        "action_bias": [0.0, 0.0, 0.0, 0.0],
+        "latch_branch": False,
+        "branch_observation_index": None,
+        "branches": None,
+    },
     "target_mode": "behavior_tree",
+    # Curriculum-only multiplier for target BT roll/pitch/rudder authority.
+    "target_control_surface_scale": 1.0,
     "ownship_behavior_dll": None,
     "target_behavior_dll": "AIP_BASE_target.dll",
     "target_loiter": {"enabled": True, "bank": 30.0, "pitch": 0.0},
@@ -32,6 +60,11 @@ DEFAULT_ENV_CONFIG = {
         "loss_reward": -100.0,
         "draw_reward": -30.0,
         "guard_fail_penalty": -50.0,
+        # Optional curriculum milestone. Zero-valued rewards preserve the
+        # common terminal contract for stages that do not opt in.
+        "wez_required_steps": 10,
+        "wez_milestone_bonus": 0.0,
+        "wez_miss_penalty": 0.0,
     },
     "wez": {
         "angle_deg": 2.0,
@@ -40,10 +73,18 @@ DEFAULT_ENV_CONFIG = {
     },
     "ownship": [1000.0, 0.0, -7000.0, 0.0, 0.0, 0.0, 300.0],
     "target": [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 300.0],
+    # Optional per-episode target speed range for one-axis curriculum expansion.
+    "target_speed_range_mps": None,
+    # Optional deterministic episode seed cycle for narrow curriculum stages.
+    # Explicit reset(seed=...) values always take precedence.
+    "episode_seed_cycle": None,
     "artifacts_dir": "artifacts/logs",
     # Per-episode position randomization (used by curriculum; disabled by default)
     "ownship_randomization": {
         "enabled": False,
+        # Exact initial separation range along the baseline line of sight.
+        # None preserves the configured ownship/target separation.
+        "distance_range_m": None,
         "radius": 0.0,      # NED position scatter radius (meters)
         "r_roll": 0.0,      # roll scatter (degrees)
         "r_pitch": 0.0,     # pitch scatter (degrees)

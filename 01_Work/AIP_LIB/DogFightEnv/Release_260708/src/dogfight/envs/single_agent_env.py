@@ -18,12 +18,18 @@ import FighterSim
 import JSBSimWrapper
 from GeoMathUtil import GeometryInfo
 from dogfight.ai.action_provider import ActionContext
+from dogfight.ai.bt_action_provider import BTActionProvider
+from dogfight.ai.hybrid_action_provider import (
+    TargetAltitudeGuardActionProvider,
+    build_pursuit_guidance_provider,
+)
 from dogfight.ai.native_bt import AIPilot
 from dogfight.config import FEET_TO_METER, METER_TO_FEET, merge_env_config
 from dogfight.envs.initial_scenario import sample_scenario_pool
 from dogfight.envs.observation import (
     build_observation,
     normalize,
+    mirror_tactical_observation,
     observation_size as builtin_observation_size,
 )
 from dogfight.envs.reward import compute_reward
@@ -92,8 +98,97 @@ class DogFightEnv(gym.Env):
         self._target_ai = None
         self._ownship_action_provider = ownship_action_provider
         self._target_action_provider = target_action_provider
+        self._target_action_provider_behavior_tree_only = False
 
         self.config = merge_env_config(env_config)
+        guidance_residual = self.config.get("pursuit_guidance_residual", {})
+        self._pursuit_guidance_provider = None
+        self._pursuit_guidance_residual_scale = np.ones(4, dtype=np.float32)
+        self._pursuit_guidance_near_residual_scale = None
+        self._pursuit_guidance_near_distance_m = 0.0
+        self._pursuit_guidance_near_ata_deg = 180.0
+        self._pursuit_guidance_suppress_opposing_roll_heading_error_deg = 0.0
+        self._pursuit_guidance_opposing_roll_guidance_scale = 1.0
+        if bool(guidance_residual.get("enabled", False)):
+            self._pursuit_guidance_provider = build_pursuit_guidance_provider(
+                guidance_residual
+            )
+            self._pursuit_guidance_residual_scale = np.asarray(
+                guidance_residual.get(
+                    "residual_scale", [0.25, 0.25, 0.25, 0.10]
+                ),
+                dtype=np.float32,
+            )
+            self._pursuit_guidance_suppress_opposing_roll_heading_error_deg = max(
+                float(
+                    guidance_residual.get(
+                        "suppress_opposing_roll_heading_error_deg", 0.0
+                    )
+                ),
+                0.0,
+            )
+            self._pursuit_guidance_opposing_roll_guidance_scale = max(
+                float(guidance_residual.get("opposing_roll_guidance_scale", 1.0)),
+                1.0,
+            )
+            if self._pursuit_guidance_residual_scale.shape != (4,):
+                raise ValueError(
+                    "pursuit_guidance_residual.residual_scale must have 4 values"
+                )
+            near_residual_scale = guidance_residual.get("near_residual_scale")
+            if near_residual_scale is not None:
+                self._pursuit_guidance_near_residual_scale = np.asarray(
+                    near_residual_scale, dtype=np.float32
+                )
+                if self._pursuit_guidance_near_residual_scale.shape != (4,):
+                    raise ValueError(
+                        "pursuit_guidance_residual.near_residual_scale must have 4 values"
+                    )
+                self._pursuit_guidance_near_distance_m = max(
+                    float(guidance_residual.get("near_distance_m", 0.0)), 0.0
+                )
+                self._pursuit_guidance_near_ata_deg = max(
+                    float(guidance_residual.get("near_ata_deg", 180.0)), 0.0
+                )
+        target_altitude_guard = dict(self.config.get("target_altitude_guard", {}))
+        if (
+            self._target_action_provider is None
+            and self.config["target_mode"] == "behavior_tree"
+            and (
+                float(self.config.get("target_control_surface_scale", 1.0)) < 1.0
+                or bool(target_altitude_guard.get("enabled", False))
+            )
+        ):
+            target_provider = BTActionProvider(
+                dll_name=self.config["target_behavior_dll"]
+            )
+            if bool(target_altitude_guard.get("enabled", False)):
+                target_provider = TargetAltitudeGuardActionProvider(
+                    target_provider,
+                    trigger_altitude_m=float(
+                        target_altitude_guard.get("trigger_altitude_m", 2500.0)
+                    ),
+                    release_altitude_m=float(
+                        target_altitude_guard.get("release_altitude_m", 4000.0)
+                    ),
+                    roll_level_gain=float(
+                        target_altitude_guard.get("roll_level_gain", 0.02)
+                    ),
+                    pull_up_action=float(
+                        target_altitude_guard.get("pull_up_action", -1.0)
+                    ),
+                    throttle_action=float(
+                        target_altitude_guard.get("throttle_action", 1.0)
+                    ),
+                    proportional_pull_up=bool(
+                        target_altitude_guard.get("proportional_pull_up", False)
+                    ),
+                    minimum_pull_fraction=float(
+                        target_altitude_guard.get("minimum_pull_fraction", 0.0)
+                    ),
+                )
+            self._target_action_provider = target_provider
+            self._target_action_provider_behavior_tree_only = True
         self._base_target_mode = str(self.config["target_mode"])
         self._base_target_loiter = copy.deepcopy(self.config["target_loiter"])
         self._base_target_autopilot = copy.deepcopy(
@@ -141,7 +236,12 @@ class DogFightEnv(gym.Env):
                 shape=(self.num_observation,),
                 dtype=np.float32,
             )
-        elif self._observation_mode == "tactical16":
+        elif self._observation_mode in {
+            "tactical16",
+            "tactical17",
+            "tactical21",
+            "tactical25",
+        }:
             self.observation_space = gym.spaces.Box(
                 low=-1.0, high=1.0, shape=(self.num_observation,), dtype=np.float32
             )
@@ -202,6 +302,8 @@ class DogFightEnv(gym.Env):
         # Episode-level accumulators (reset in reset())
         self._in_wez = False
         self._ep_wez_steps = 0
+        self._ep_consecutive_wez_steps = 0
+        self._ep_max_consecutive_wez_steps = 0
         self._ep_step_count = 0
         self._ep_distance_sum = 0.0
         self._ep_distance_min = float("inf")
@@ -219,6 +321,21 @@ class DogFightEnv(gym.Env):
     def _to_sim_action(self, rl_action: np.ndarray) -> np.ndarray:
         """Convert RL action space [-1,1]^4 → simulator format (throttle [0,1])."""
         a = np.clip(rl_action, -1.0, 1.0).astype(np.float32)
+        residual = self.config.get("residual_action", {})
+        if residual.get("enabled", False):
+            baseline = np.asarray(
+                residual.get("baseline", [0.0, 0.0, 0.0, 0.0]),
+                dtype=np.float32,
+            )
+            scale = np.asarray(
+                residual.get("scale", [1.0, 1.0, 1.0, 1.0]),
+                dtype=np.float32,
+            )
+            if baseline.shape != (4,) or scale.shape != (4,):
+                raise ValueError("residual_action baseline and scale must have 4 values")
+            a = np.clip(baseline + scale * a, -1.0, 1.0)
+        control_surface_scale = float(self.config.get("control_surface_scale", 1.0))
+        a[:3] *= np.clip(control_surface_scale, 0.0, 1.0)
         a[3] = (a[3] + 1.0) / 2.0                        # [-1,1] → [0,1]
         return np.clip(a, self._SIM_ACTION_LOW, self._SIM_ACTION_HIGH)
 
@@ -235,13 +352,35 @@ class DogFightEnv(gym.Env):
         return self._build_ai(self.config["ownship_behavior_dll"])
 
     def _build_target_ai(self):
-        if self._target_action_provider is not None:
+        if (
+            self._target_action_provider is not None
+            and (
+                not self._target_action_provider_behavior_tree_only
+                or self.config["target_mode"] == "behavior_tree"
+            )
+        ):
             return None
         if self.config["target_mode"] != "behavior_tree":
             return None
         return self._build_ai(self.config["target_behavior_dll"])
 
+    def _resolve_episode_seed(self, seed: Optional[int]) -> Optional[int]:
+        if seed is not None:
+            return int(seed)
+        cycle = self.config.get("episode_seed_cycle")
+        if not cycle:
+            return None
+        if not isinstance(cycle, (list, tuple)):
+            raise ValueError("episode_seed_cycle must be a list or tuple")
+        if len(cycle) == 0:
+            raise ValueError("episode_seed_cycle must not be empty")
+        index = int(getattr(self, "_episode_seed_cycle_index", 0))
+        resolved = int(cycle[index % len(cycle)])
+        self._episode_seed_cycle_index = index + 1
+        return resolved
+
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
+        seed = self._resolve_episode_seed(seed)
         super().reset(seed=seed)
         if options:
             self.config = merge_env_config({**self.config, **options})
@@ -260,20 +399,58 @@ class DogFightEnv(gym.Env):
         self._restore_target_behavior_config()
         scenario = self.config.get("initial_scenario", {})
         scenario_mode = scenario.get("mode", "default")
+        apply_ownship_randomization = True
+        if scenario_mode == "two_circle_headon":
         if scenario_mode == "scenario_pool":
             self._apply_scenario_pool_initial_scenario(scenario)
         elif scenario_mode == "two_circle_headon":
             self._apply_two_circle_headon_initial_scenario(scenario)
         elif scenario_mode == "ref_old_random":
             self._apply_ref_old_random_initial_scenario(scenario)
+        elif scenario_mode == "mixed_ref_old_random_hold":
+            hard_episode_seeds = {
+                int(value) for value in scenario.get("hard_episode_seeds", [])
+            }
+            use_hard_episode = seed is not None and int(seed) in hard_episode_seeds
+            if use_hard_episode:
+                hard_scenario = dict(scenario.get("hard_scenario", {}))
+                hard_scenario["mode"] = "ref_old_random"
+                self._apply_ref_old_random_initial_scenario(hard_scenario)
+                scenario_mode = "ref_old_random"
+                apply_ownship_randomization = False
+                self._initial_scenario_metrics["mixed_hold_episode"] = 0.0
+            else:
+                self._initial_scenario_metrics = {"mixed_hold_episode": 1.0}
+                self._restore_default_initial_conditions()
+                scenario_mode = "default"
         else:
             self._restore_default_initial_positions()
             self._initial_scenario_metrics = {}
+            self._restore_default_initial_conditions()
+
+        target_speed_range = self.config.get("target_speed_range_mps")
+        if (
+            scenario_mode not in ("two_circle_headon", "ref_old_random")
+            and target_speed_range is not None
+        ):
+            sampled_target_speed = self.randomize_target_speed(target_speed_range)
+            self._initial_scenario_metrics["initial_target_speed_mps"] = (
+                sampled_target_speed
+            )
 
         # Apply per-episode position randomization if configured
         rand = self.config.get("ownship_randomization", {})
+        # Apply per-episode position randomization if configured
+        rand = self.config.get("ownship_randomization", {})
         generated_modes = {"scenario_pool", "two_circle_headon", "ref_old_random"}
-        if scenario_mode not in generated_modes and rand.get("enabled", False):
+        if (
+            apply_ownship_randomization
+            and scenario_mode not in generated_modes
+            and rand.get("enabled", False)
+        ):
+            distance_range = rand.get("distance_range_m")
+            if distance_range is not None:
+                self.randomize_initial_distance(distance_range)
             self.add_random_init_position(
                 "ownship",
                 radius=float(rand.get("radius", 0)),
@@ -288,14 +465,19 @@ class DogFightEnv(gym.Env):
         self._update_initial_geometry_metrics(scenario_mode)
         self.pre_obs = self.get_observation()
         self.info = {"end_condition": "", **self._initial_scenario_metrics}
+        self.ownship_log = []
+        self.target_log = []
         self.ownship_damage = 0.0
         self.target_damage = 0.0
         self.num_engage += 1
         self.current_timestep = 0
+        self._action_feedback_branch_index = None
         self._reset_action_providers()
         # Reset episode accumulators
         self._in_wez = False
         self._ep_wez_steps = 0
+        self._ep_consecutive_wez_steps = 0
+        self._ep_max_consecutive_wez_steps = 0
         self._ep_step_count = 0
         self._ep_distance_sum = 0.0
         self._ep_distance_min = float("inf")
@@ -307,7 +489,8 @@ class DogFightEnv(gym.Env):
         return np.array(self.pre_obs, dtype=np.float32), dict(self.info)
 
     def step(self, action) -> Tuple[np.ndarray, float, bool, bool, Dict]:
-        action = np.asarray(action, dtype=np.float32)
+        action = self._restore_canonical_target_bank_action(action)
+        action = self._apply_observation_action_feedback(action)
         failure = self._advance_simulation_step_ratio(action)
         if failure is not None:
             return failure
@@ -340,6 +523,12 @@ class DogFightEnv(gym.Env):
             truncated,
             end_condition,
         )
+        reward, components = self._apply_wez_milestone_reward(
+            reward,
+            components,
+            terminated=terminated,
+            truncated=truncated,
+        )
 
         ep_mean_dist, ep_min_dist = self._update_episode_metrics(
             action,
@@ -357,6 +546,7 @@ class DogFightEnv(gym.Env):
             "reward_components": components,
             "ep_reward_components": dict(self._ep_reward_components),
             "ep_wez_steps": self._ep_wez_steps,
+            "ep_max_consecutive_wez_steps": self._ep_max_consecutive_wez_steps,
             "ep_step_count": self._ep_step_count,
             "ep_mean_distance": ep_mean_dist,
             "ep_min_distance": ep_min_dist,
@@ -378,6 +568,110 @@ class DogFightEnv(gym.Env):
             self._print_episode_termination(end_condition)
         return np.array(cur_obs, dtype=np.float32), reward, terminated, truncated, dict(self.info)
 
+    def _apply_observation_action_feedback(self, action) -> np.ndarray:
+        action_array = np.asarray(action, dtype=np.float32)
+        feedback_config = self.config.get("observation_action_feedback", {})
+        if not bool(feedback_config.get("enabled", False)):
+            return action_array
+
+        observation_index = int(feedback_config.get("observation_index", 0))
+        observation = np.asarray(self.pre_obs, dtype=np.float32)
+        if not 0 <= observation_index < observation.size:
+            raise IndexError(
+                f"observation_action_feedback index {observation_index} is "
+                f"outside a {observation.size}-element observation"
+            )
+        selected_config = feedback_config
+        branches = feedback_config.get("branches")
+        if branches:
+            branch_index = getattr(self, "_action_feedback_branch_index", None)
+            if branch_index is None or not bool(
+                feedback_config.get("latch_branch", False)
+            ):
+                branch_observation_index = feedback_config.get(
+                    "branch_observation_index"
+                )
+                if branch_observation_index is None:
+                    branch_observation_index = observation_index
+                branch_observation_index = int(branch_observation_index)
+                if not 0 <= branch_observation_index < observation.size:
+                    raise IndexError(
+                        "observation_action_feedback branch index "
+                        f"{branch_observation_index} is outside a "
+                        f"{observation.size}-element observation"
+                    )
+                feature_value = float(observation[branch_observation_index])
+                branch_index = len(branches) - 1
+                for index, branch in enumerate(branches):
+                    maximum = branch.get("max_value")
+                    if maximum is None or feature_value <= float(maximum):
+                        branch_index = index
+                        break
+                if bool(feedback_config.get("latch_branch", False)):
+                    self._action_feedback_branch_index = branch_index
+            selected_config = branches[int(branch_index)]
+        gains = np.asarray(
+            selected_config.get("action_gains", [0.0, 0.0, 0.0, 0.0]),
+            dtype=np.float32,
+        )
+        if gains.shape != (4,):
+            raise ValueError(
+                "observation_action_feedback.action_gains must contain four values"
+            )
+        bias = np.asarray(
+            selected_config.get("action_bias", [0.0, 0.0, 0.0, 0.0]),
+            dtype=np.float32,
+        )
+        if bias.shape != (4,):
+            raise ValueError(
+                "observation_action_feedback.action_bias must contain four values"
+            )
+        return np.clip(
+            action_array + bias + float(observation[observation_index]) * gains,
+            -1.0,
+            1.0,
+        ).astype(np.float32)
+
+    def _apply_wez_milestone_reward(
+        self,
+        reward: float,
+        components: dict,
+        *,
+        terminated: bool,
+        truncated: bool,
+    ) -> tuple[float, dict]:
+        """Apply an optional episode-level consecutive-WEZ curriculum signal."""
+        required_steps = max(
+            int(self._reward_config.get("wez_required_steps", 10)),
+            1,
+        )
+        next_consecutive = (
+            self._ep_consecutive_wez_steps + 1 if self._in_wez else 0
+        )
+        next_max = max(self._ep_max_consecutive_wez_steps, next_consecutive)
+
+        milestone = 0.0
+        if next_consecutive == required_steps:
+            milestone = float(
+                self._reward_config.get("wez_milestone_bonus", 0.0)
+            )
+
+        progress = 0.0
+        if next_consecutive > 0:
+            progress = float(
+                self._reward_config.get("wez_progress_scale", 0.0)
+            ) * min(next_consecutive, required_steps) / required_steps
+
+        miss = 0.0
+        if (terminated or truncated) and next_max < required_steps:
+            miss = float(self._reward_config.get("wez_miss_penalty", 0.0))
+
+        updated_components = dict(components)
+        updated_components["wez_progress"] = progress
+        updated_components["wez_milestone"] = milestone
+        updated_components["wez_miss"] = miss
+        return float(reward) + progress + milestone + miss, updated_components
+
     def _advance_simulation_step_ratio(
         self,
         action: np.ndarray,
@@ -388,17 +682,19 @@ class DogFightEnv(gym.Env):
         for _ in range(int(self._step_ratio)):
             self._step_controlled_aircraft(action)
             if np.isnan(self._sim.get_state()).any():
-                info = {"end_condition": "Ownship FDM output Fall", "outcome": "crash"}
-                self._ep_step_count += 1
-                self._print_episode_termination(info["end_condition"])
-                return np.array(self.pre_obs, dtype=np.float32), 0.0, True, False, info
+                return self._finish_fdm_failure(
+                    action,
+                    end_condition="Ownship FDM output Fall",
+                    outcome="crash",
+                )
 
             self._step_target_aircraft()
             if np.isnan(self._target_sim.get_state()).any():
-                info = {"end_condition": "Target FDM output Fall", "outcome": "other"}
-                self._ep_step_count += 1
-                self._print_episode_termination(info["end_condition"])
-                return np.array(self.pre_obs, dtype=np.float32), 0.0, True, False, info
+                return self._finish_fdm_failure(
+                    action,
+                    end_condition="Target FDM output Fall",
+                    outcome="win",
+                )
 
             self.update_damage()
             ownship_damage_total += float(self.ownship_damage)
@@ -411,6 +707,55 @@ class DogFightEnv(gym.Env):
         self.target_damage = target_damage_total
         self._in_wez = in_wez_any
         return None
+
+    def _finish_fdm_failure(
+        self,
+        action: np.ndarray,
+        *,
+        end_condition: str,
+        outcome: str,
+    ) -> tuple[np.ndarray, float, bool, bool, Dict]:
+        """Finish an FDM failure through the normal reward/metric contract."""
+        reward, components = self._compute_step_reward(True, False, end_condition)
+        ep_mean_dist, ep_min_dist = self._update_episode_metrics(
+            action,
+            reward,
+            components,
+        )
+        ownship_health = float(self._ownship_state[StateIndex.HEALTH])
+        target_health = float(self._target_state[StateIndex.HEALTH])
+        self.info = {
+            "end_condition": end_condition,
+            "outcome": outcome,
+            "ownship_damage": self.ownship_damage,
+            "target_damage": self.target_damage,
+            "ownship_health": ownship_health,
+            "target_health": target_health,
+            "reward_components": components,
+            "ep_reward_components": dict(self._ep_reward_components),
+            "ep_wez_steps": self._ep_wez_steps,
+            "ep_max_consecutive_wez_steps": self._ep_max_consecutive_wez_steps,
+            "ep_step_count": self._ep_step_count,
+            "ep_mean_distance": ep_mean_dist,
+            "ep_min_distance": ep_min_dist,
+            "ep_altitude_penalty_steps": self._ep_altitude_penalty_steps,
+            "final_ata_deg": abs(float(self._geo_info._get_antenna_train_angle(
+                self._ownship_state, self._target_state, True
+            ))),
+            "final_aa_deg": abs(float(self._geo_info._get_aspect_angle(
+                self._ownship_state, self._target_state, True
+            ))),
+            "headon_guard_fail": False,
+            **self._initial_scenario_metrics,
+        }
+        self._print_episode_termination(end_condition)
+        return (
+            np.array(self.pre_obs, dtype=np.float32),
+            reward,
+            True,
+            False,
+            dict(self.info),
+        )
 
     @staticmethod
     def _classify_outcome(
@@ -425,8 +770,17 @@ class DogFightEnv(gym.Env):
                 return "win"
             if ownship_health <= 0.0 < target_health:
                 return "loss"
-            if end_condition in ("ownship altitude below min", "FDM Update Fail"):
+            if end_condition in (
+                "ownship altitude below min",
+                "Ownship FDM output Fall",
+                "FDM Update Fail",
+            ):
                 return "crash"
+            if end_condition in (
+                "target altitude below min",
+                "Target FDM output Fall",
+            ):
+                return "win"
             if end_condition == "two circle headon guard fail":
                 return "loss"
             return "draw"
@@ -467,7 +821,18 @@ class DogFightEnv(gym.Env):
         self._ep_distance_min = min(self._ep_distance_min, distance)
         if self._in_wez:
             self._ep_wez_steps += 1
-        if components.get("safety", 0.0) < 0.0:
+            self._ep_consecutive_wez_steps += 1
+            self._ep_max_consecutive_wez_steps = max(
+                self._ep_max_consecutive_wez_steps,
+                self._ep_consecutive_wez_steps,
+            )
+        else:
+            self._ep_consecutive_wez_steps = 0
+        safety_reward = float(components.get("safety", 0.0)) + sum(
+            float(components.get(key, 0.0))
+            for key in ("altitude", "dive", "bank")
+        )
+        if safety_reward < 0.0:
             self._ep_altitude_penalty_steps += 1
         for k, v in components.items():
             self._ep_reward_components[k] = self._ep_reward_components.get(k, 0.0) + v
@@ -504,7 +869,85 @@ class DogFightEnv(gym.Env):
                 self.pre_obs,
             )
             result = self._ownship_action_provider.compute_action(context)
-            self._sim.step(result.action)
+            if result.source == "pursuit_autopilot":
+                self._sim.step_autopilot(
+                    float(result.info["heading_cmd"]),
+                    float(result.info["altitude_cmd"]),
+                    float(result.info["speed_cmd"]),
+                )
+                return
+            provider_policy_action = (
+                DogFightEnv._apply_observation_action_feedback(self, result.action)
+                if result.source == "rl"
+                else np.asarray(result.action, dtype=np.float32)
+            )
+            provider_action = (
+                self._to_sim_action(provider_policy_action)
+                if result.source == "rl"
+                else provider_policy_action
+            )
+            self._sim.step(provider_action)
+            return
+
+        if self._pursuit_guidance_provider is not None:
+            context = self._build_action_context(
+                self._sim,
+                self._target_sim,
+                self._ownship_state,
+                self._target_state,
+                self.pre_obs,
+            )
+            guidance = self._pursuit_guidance_provider.compute_action(context)
+            policy_action = np.asarray(action, dtype=np.float32)
+            residual_scale = self._pursuit_guidance_residual_scale
+            if self._pursuit_guidance_near_residual_scale is not None:
+                distance = float(self._geo_info._get_distance(
+                    self._ownship_state, self._target_state
+                ))
+                ata_deg = abs(float(self._geo_info._get_antenna_train_angle(
+                    self._ownship_state, self._target_state, True
+                )))
+                if (
+                    distance <= self._pursuit_guidance_near_distance_m
+                    and ata_deg <= self._pursuit_guidance_near_ata_deg
+                ):
+                    residual_scale = self._pursuit_guidance_near_residual_scale
+            suppress_threshold = (
+                self._pursuit_guidance_suppress_opposing_roll_heading_error_deg
+            )
+            signed_heading_error = float(
+                guidance.info.get("heading_error_deg", 0.0)
+            )
+            heading_error = abs(signed_heading_error)
+            guidance_action = np.asarray(guidance.action, dtype=np.float32)
+            ownship_bank = (
+                (float(self._ownship_state[StateIndex.ROLL]) + 180.0) % 360.0
+                - 180.0
+            )
+            opposing_policy_roll = (
+                float(guidance.action[0]) * float(policy_action[0]) < 0.0
+            )
+            wrong_way_bank = signed_heading_error * ownship_bank < 0.0
+            if (
+                suppress_threshold > 0.0
+                and heading_error >= suppress_threshold
+                and (opposing_policy_roll or wrong_way_bank)
+            ):
+                residual_scale = np.array(residual_scale, copy=True)
+                residual_scale[0] = 0.0
+                guidance_action = np.array(guidance_action, copy=True)
+                guidance_action[0] = float(np.clip(
+                    guidance_action[0]
+                    * self._pursuit_guidance_opposing_roll_guidance_scale,
+                    -1.0,
+                    1.0,
+                ))
+            combined = np.clip(
+                guidance_action + residual_scale * policy_action,
+                -1.0,
+                1.0,
+            )
+            self._sim.step(self._to_sim_action(combined))
             return
 
         control_mode = self.config["ownship_control_mode"]
@@ -519,7 +962,13 @@ class DogFightEnv(gym.Env):
             self._sim.step(self._to_sim_action(action))
 
     def _step_target_aircraft(self) -> None:
-        if self._target_action_provider is not None:
+        if (
+            self._target_action_provider is not None
+            and (
+                not self._target_action_provider_behavior_tree_only
+                or self.config["target_mode"] == "behavior_tree"
+            )
+        ):
             context = self._build_action_context(
                 self._target_sim,
                 self._sim,
@@ -528,7 +977,7 @@ class DogFightEnv(gym.Env):
                 self.pre_obs,
             )
             result = self._target_action_provider.compute_action(context)
-            self._target_sim.step(result.action)
+            self._target_sim.step(self._scale_target_action(result.action))
             return
 
         target_mode = self.config["target_mode"]
@@ -549,8 +998,37 @@ class DogFightEnv(gym.Env):
         else:
             self._target_sim.step_fix()
 
+    def _scale_target_action(self, action: np.ndarray) -> np.ndarray:
+        """Limit target BT maneuver authority while preserving its throttle."""
+        scaled = np.asarray(action, dtype=np.float32).copy()
+        scale = float(self.config.get("target_control_surface_scale", 1.0))
+        scaled[:3] *= np.clip(scale, 0.0, 1.0)
+        return np.clip(scaled, self._SIM_ACTION_LOW, self._SIM_ACTION_HIGH)
+
     def get_observation(self):
         return self._build_observation_for(self._ownship_state, self._target_state)
+
+    def _canonicalize_negative_target_bank(self, target_state) -> bool:
+        if not bool(
+            getattr(self, "config", {}).get(
+                "canonicalize_negative_target_bank", False
+            )
+        ):
+            return False
+        if self._observation_mode not in {
+            "tactical16", "tactical17", "tactical21", "tactical25"
+        }:
+            return False
+        target_roll = (
+            float(target_state[StateIndex.ROLL]) + 180.0
+        ) % 360.0 - 180.0
+        return target_roll < 0.0
+
+    def _restore_canonical_target_bank_action(self, action) -> np.ndarray:
+        restored = np.asarray(action, dtype=np.float32).copy()
+        if self._canonicalize_negative_target_bank(self._target_state):
+            restored[[0, 2]] *= -1.0
+        return restored
 
     def _build_observation_for(self, ownship_state, target_state) -> np.ndarray:
         if self._observation_fn is not None:
@@ -568,14 +1046,22 @@ class DogFightEnv(gym.Env):
                 )
             return observation
 
-        wez_cfg = self._wez if self._observation_mode == "tactical16" else None
-        return build_observation(
+        wez_cfg = (
+            self._wez
+            if self._observation_mode
+            in {"tactical16", "tactical17", "tactical21", "tactical25"}
+            else None
+        )
+        observation = build_observation(
             self._observation_mode,
             ownship_state,
             target_state,
             self._geo_info,
             wez_cfg,
         )
+        if self._canonicalize_negative_target_bank(target_state):
+            observation = mirror_tactical_observation(observation)
+        return observation
 
     def get_reward(self):
         terminated, truncated, end_condition = evaluate_termination(
@@ -687,6 +1173,78 @@ class DogFightEnv(gym.Env):
         fighter._init_pos_lon = lla[1]
         fighter._init_pos_alt = lla[2]
 
+    def _restore_default_initial_conditions(self) -> None:
+        """Restore configured default geometry before per-episode jitter."""
+        for flight in ("ownship", "target"):
+            values = list(self.config[flight])
+            if len(values) < 7:
+                raise ValueError(f"{flight} initial condition requires 7 values")
+            self.change_init_position(
+                flight=flight,
+                init_n=float(values[0]),
+                init_e=float(values[1]),
+                init_d=float(values[2]),
+                init_roll=float(values[3]),
+                init_pitch=float(values[4]),
+                init_heading=float(values[5]),
+                init_speed=float(values[6]),
+            )
+
+    def randomize_initial_distance(self, distance_range_m) -> float:
+        """Set ownship separation along the baseline LOS without changing its angle."""
+        minimum, maximum = self._range_values(distance_range_m)
+        if minimum <= 0.0 or maximum < minimum:
+            raise ValueError(
+                "distance_range_m must be a positive [minimum, maximum] range"
+            )
+        desired = float(self.np_random.uniform(minimum, maximum))
+        ownship = np.asarray(
+            [
+                self._sim._init_pos_n,
+                self._sim._init_pos_e,
+                self._sim._init_pos_d,
+            ],
+            dtype=np.float64,
+        )
+        target = np.asarray(
+            [
+                self._target_sim._init_pos_n,
+                self._target_sim._init_pos_e,
+                self._target_sim._init_pos_d,
+            ],
+            dtype=np.float64,
+        )
+        line_of_sight = ownship - target
+        baseline_distance = float(np.linalg.norm(line_of_sight))
+        if baseline_distance <= 1.0e-9:
+            raise ValueError("cannot randomize distance for coincident aircraft")
+        position = target + line_of_sight / baseline_distance * desired
+        self._sim._init_pos_n = float(position[0])
+        self._sim._init_pos_e = float(position[1])
+        self._sim._init_pos_d = float(position[2])
+        lla = pm.ned2geodetic(
+            self._sim._init_pos_n,
+            self._sim._init_pos_e,
+            self._sim._init_pos_d,
+            self._sim._origin_lat,
+            self._sim._origin_lon,
+            self._sim._origin_alt,
+        )
+        self._sim._init_pos_lat = lla[0]
+        self._sim._init_pos_lon = lla[1]
+        self._sim._init_pos_alt = lla[2]
+        return desired
+
+    def randomize_target_speed(self, speed_range_mps) -> float:
+        """Sample target initial speed without changing any other initial state."""
+        minimum, maximum = self._range_values(speed_range_mps)
+        if minimum <= 0.0 or maximum < minimum:
+            raise ValueError(
+                "target_speed_range_mps must be a positive [minimum, maximum] range"
+            )
+        sampled = float(self.np_random.uniform(minimum, maximum))
+        self._target_sim._init_speed = sampled
+        return sampled
     def _restore_target_behavior_config(self) -> None:
         """Restore target controls before a scenario applies episode overrides."""
         self.config["target_mode"] = self._base_target_mode
@@ -887,6 +1445,11 @@ class DogFightEnv(gym.Env):
 
         self._initial_scenario_metrics = {
             "legacy_scenario_index": float(scenario_index),
+            "initial_ownship_speed_mps": float(self._sim._init_speed),
+            "initial_target_speed_mps": float(self._target_sim._init_speed),
+            "target_loiter_bank_deg": float(
+                self.config.get("target_loiter", {}).get("bank", 0.0)
+            ),
         }
 
     def _add_ref_old_shared_random_starting_position(self, randomization: dict) -> None:
@@ -921,11 +1484,14 @@ class DogFightEnv(gym.Env):
                 0.0, float(randomization.get("speed_mps", 50.0))
             )
         )
+        ownship_speed_advantage = float(
+            randomization.get("ownship_speed_advantage_mps", 0.0)
+        )
 
         self._sim._init_pos_n += rand_n
         self._sim._init_pos_e += rand_e
         self._sim._init_pos_d += rand_d
-        self._sim._init_speed += rand_speed
+        self._sim._init_speed += rand_speed + ownship_speed_advantage
         self._target_sim._init_pos_n += rand_n + rand_distance_n
         self._target_sim._init_pos_e += rand_e
         self._target_sim._init_pos_d += rand_d
@@ -984,12 +1550,19 @@ class DogFightEnv(gym.Env):
         r_heading=5,
     ):
         fighter = self._sim if flight == "ownship" else self._target_sim
-        fighter._init_pos_n += self._sample_symmetric_offset(radius)
-        fighter._init_pos_e += self._sample_symmetric_offset(radius)
-        fighter._init_pos_d += self._sample_symmetric_offset(radius)
-        fighter._init_roll += self._sample_symmetric_offset(r_roll)
-        fighter._init_pitch += self._sample_symmetric_offset(r_pitch)
-        fighter._init_heading += self._sample_symmetric_offset(r_heading)
+
+        def jitter(bound) -> float:
+            upper = float(bound)
+            if upper <= 0:
+                return 0.0
+            return float(self.np_random.uniform(-upper, upper))
+
+        fighter._init_pos_n += jitter(radius)
+        fighter._init_pos_e += jitter(radius)
+        fighter._init_pos_d += jitter(radius)
+        fighter._init_roll += jitter(r_roll)
+        fighter._init_pitch += jitter(r_pitch)
+        fighter._init_heading += jitter(r_heading)
 
         if fighter._init_roll > 180:
             fighter._init_roll -= 360
@@ -1063,6 +1636,16 @@ class DogFightEnv(gym.Env):
         )
 
     def _reset_action_providers(self) -> None:
+        if self._pursuit_guidance_provider is not None:
+            self._pursuit_guidance_provider.reset(
+                self._build_action_context(
+                    self._sim,
+                    self._target_sim,
+                    self._ownship_state,
+                    self._target_state,
+                    self.pre_obs,
+                )
+            )
         for provider, sim, opponent, ownship_state, target_state in (
             (self._ownship_action_provider, self._sim, self._target_sim, self._ownship_state, self._target_state),
             (self._target_action_provider, self._target_sim, self._sim, self._target_state, self._ownship_state),

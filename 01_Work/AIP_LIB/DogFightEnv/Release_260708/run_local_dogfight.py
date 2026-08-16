@@ -47,6 +47,7 @@ def parse_args():
     parser.add_argument("--max-engage-time", type=float, default=300.0)
     parser.add_argument("--episode-step-limit", type=int, default=18000)
     parser.add_argument("--min-altitude", type=float, default=300.0)
+    parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to run in one process.")
     parser.add_argument(
         "--experiment-yaml",
         default="",
@@ -61,7 +62,10 @@ def parse_args():
         "--stage-index", type=int, default=None, help="Stage index to reuse."
     )
     parser.add_argument("--save-log", action="store_true", help="Save tacview CSV log after the episode.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.episodes < 1:
+        parser.error("--episodes must be at least 1")
+    return args
 
 
 def build_provider(side: str, backend: str, bundle_dir: str | None, bt_dll: str, policy_id: str, hybrid_mode: str, alpha: float, residual_scale: float):
@@ -165,24 +169,25 @@ def main():
         )
 
         try:
-            observation, info = env.reset()
-            terminated = False
-            truncated = False
-            total_reward = 0.0
-            while not (terminated or truncated):
-                observation, reward, terminated, truncated, info = env.step(np.zeros(4, dtype=np.float32))
-                total_reward += reward
+            for episode_index in range(1, args.episodes + 1):
+                observation, info = env.reset()
+                terminated = False
+                truncated = False
+                total_reward = 0.0
+                while not (terminated or truncated):
+                    observation, reward, terminated, truncated, info = env.step(np.zeros(4, dtype=np.float32))
+                    total_reward += reward
 
-            print("simulation finished")
-            print(f"end_condition: {info.get('end_condition', '')}")
-            print(f"terminated: {terminated} truncated: {truncated}")
-            print(f"total_reward: {total_reward:.4f}")
-            print(f"ownship_health: {info.get('ownship_health', 'n/a')}")
-            print(f"target_health: {info.get('target_health', 'n/a')}")
+                print(f"simulation finished ({episode_index}/{args.episodes})")
+                print(f"end_condition: {info.get('end_condition', '')}")
+                print(f"terminated: {terminated} truncated: {truncated}")
+                print(f"total_reward: {total_reward:.4f}")
+                print(f"ownship_health: {info.get('ownship_health', 'n/a')}")
+                print(f"target_health: {info.get('target_health', 'n/a')}")
 
-            if args.save_log:
-                env.make_tacviewLog()
-                print("tacview log saved")
+                if args.save_log:
+                    env.make_tacviewLog()
+                    print("tacview log saved")
         finally:
             env.close()
 

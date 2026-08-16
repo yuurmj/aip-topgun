@@ -78,6 +78,10 @@ def build_algorithm_config(algorithm_name: str, env_name: str, env_config: dict,
         }
         if replay_buffer_config:
             training_args["replay_buffer_config"] = replay_buffer_config
+        if args.get("learning_starts") is not None:
+            training_args["num_steps_sampled_before_learning_starts"] = int(
+                args["learning_starts"]
+            )
         config = config.training(**training_args)
         if args.get("use_lstm_sac"):
             config = _apply_lstm_sac_model_config(config, args)
@@ -657,6 +661,8 @@ def build_algorithm_from_bundle(metadata: dict):
         ignore_reinit_error=True,
         include_dashboard=False,
         local_mode=True,
+        num_cpus=1,
+        log_to_driver=False,
         runtime_env={
             "env_vars": {
                 "PYTHONPATH": os.environ["PYTHONPATH"],
@@ -740,5 +746,103 @@ def build_algorithm_from_bundle(metadata: dict):
         config = config.rollouts(num_rollout_workers=0)
 
     return config.build_algo()
+
+
+class _ModuleOnlyEnvRunner:
+    """Minimal EnvRunner facade used for lightweight RLModule inference."""
+
+    def __init__(self, module):
+        self.module = module
+
+    def set_state(self, state: dict) -> None:
+        self.module.set_state(state["rl_module"])
+
+
+class _ModuleOnlyAlgorithm:
+    """Algorithm-shaped wrapper that avoids starting a local Ray cluster."""
+
+    def __init__(self, module):
+        self._module = module
+        self.env_runner = _ModuleOnlyEnvRunner(module)
+
+    def get_module(self, policy_id: str | None = None):
+        return self._module
+
+    def stop(self) -> None:
+        return None
+
+
+def build_sac_lstm_module_from_bundle(metadata: dict):
+    """Build only the saved SAC LSTM RLModule for fast local inference.
+
+    Unlike :func:`build_algorithm_from_bundle`, this path does not call
+    ``ray.init()`` or construct replay/learner components.  It deliberately
+    exposes the small Algorithm interface consumed by ``RLActionProvider`` so
+    recurrent state handling and saved lightweight weights remain identical.
+    """
+    import gymnasium as gym
+    import numpy as np
+    from ray.rllib.algorithms.sac.torch.default_sac_torch_rl_module import (
+        DefaultSACTorchRLModule,
+    )
+    from ray.rllib.core.rl_module.default_model_config import DefaultModelConfig
+    from ray.rllib.core.rl_module.rl_module import RLModuleSpec
+
+    bundle_meta = metadata.get("metadata", {})
+    if not bundle_meta.get("use_lstm_sac"):
+        raise ValueError("module-only SAC inference requires an LSTM SAC bundle")
+
+    env_config = metadata.get("algorithm_config", {}).get("env_config", {})
+    observation_summary = bundle_meta.get("observation_summary") or {}
+    obs_size = (
+        observation_summary.get("size")
+        or bundle_meta.get("observation_size")
+        or {
+            "classic12": 12,
+            "relative14": 14,
+            "tactical16": 16,
+            "tactical17": 17,
+            "tactical21": 21,
+            "tactical25": 25,
+            "legacy37": 37,
+        }.get(env_config.get("observation_mode", "tactical16"), 16)
+    )
+    action_dim = int(bundle_meta.get("action_dim", 4))
+    saved_model_config = bundle_meta.get("model_config")
+    if isinstance(saved_model_config, dict) and saved_model_config:
+        model_config = dict(saved_model_config)
+    else:
+        model_config = dataclasses.asdict(
+            DefaultModelConfig(
+                fcnet_hiddens=[256, 256],
+                fcnet_activation="relu",
+                head_fcnet_hiddens=[],
+                head_fcnet_activation="relu",
+                use_lstm=True,
+                max_seq_len=int(bundle_meta.get("max_seq_len", 8)),
+                lstm_cell_size=int(bundle_meta.get("lstm_cell_size", 64)),
+            )
+        )
+    model_config["twin_q"] = True
+
+    module = RLModuleSpec(
+        module_class=DefaultSACTorchRLModule,
+        observation_space=gym.spaces.Box(
+            low=-1.0,
+            high=1.0,
+            shape=(int(obs_size),),
+            dtype=np.float32,
+        ),
+        action_space=gym.spaces.Box(
+            low=-1.0,
+            high=1.0,
+            shape=(action_dim,),
+            dtype=np.float32,
+        ),
+        model_config=model_config,
+    ).build()
+    module.make_target_networks()
+    module.eval()
+    return _ModuleOnlyAlgorithm(module)
 
 

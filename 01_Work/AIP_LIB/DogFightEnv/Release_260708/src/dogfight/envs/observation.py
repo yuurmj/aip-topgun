@@ -5,6 +5,26 @@ import numpy as np
 from dogfight.sim.state_schema import StateIndex
 
 
+TACTICAL_MIRROR_INDICES = {
+    16: (0, 2, 7, 11),
+    17: (0, 2, 8, 12),
+    21: (0, 2, 8, 12, 17, 18),
+    25: (0, 2, 8, 12, 17, 18, 21, 22, 23, 24),
+}
+
+
+def mirror_tactical_observation(observation) -> np.ndarray:
+    mirrored = np.asarray(observation, dtype=np.float32).copy()
+    indices = TACTICAL_MIRROR_INDICES.get(int(mirrored.size))
+    if indices is None:
+        raise ValueError(
+            "tactical mirror supports observation sizes 16/17/21/25, "
+            f"got {mirrored.size}"
+        )
+    mirrored[list(indices)] *= -1.0
+    return mirrored
+
+
 def normalize(value: float, minimum: float, maximum: float) -> float:
     if maximum <= minimum:
         return 0.0
@@ -15,6 +35,12 @@ def normalize(value: float, minimum: float, maximum: float) -> float:
 
 
 def observation_size(mode: str) -> int:
+    if mode == "tactical25":
+        return 25
+    if mode == "tactical21":
+        return 21
+    if mode == "tactical17":
+        return 17
     if mode == "tactical16":
         return 16
     if mode == "relative14":
@@ -23,6 +49,12 @@ def observation_size(mode: str) -> int:
 
 
 def build_observation(mode: str, ownship_state, target_state, geo_info, wez_config=None) -> np.ndarray:
+    if mode == "tactical25":
+        return _build_tactical25(ownship_state, target_state, geo_info, wez_config)
+    if mode == "tactical21":
+        return _build_tactical21(ownship_state, target_state, geo_info, wez_config)
+    if mode == "tactical17":
+        return _build_tactical17(ownship_state, target_state, geo_info, wez_config)
     if mode == "tactical16":
         return _build_tactical16(ownship_state, target_state, geo_info, wez_config)
     if mode == "relative14":
@@ -31,6 +63,68 @@ def build_observation(mode: str, ownship_state, target_state, geo_info, wez_conf
 
 
 def describe_observation(mode: str) -> dict:
+    if mode == "tactical25":
+        base = describe_observation("tactical21")
+        return {
+            "mode": "tactical25",
+            "size": 25,
+            "features": base["features"] + [
+                "ownship_yaw_rate_norm",
+                "target_yaw_rate_norm",
+                "relative_yaw_rate_norm",
+                "los_azimuth_rate_norm",
+            ],
+            "description": (
+                "Tactical21 plus ownship/target yaw rates, relative yaw rate, "
+                "and horizontal line-of-sight azimuth rate for moving-target "
+                "turn synchronization."
+            ),
+        }
+    if mode == "tactical21":
+        base = describe_observation("tactical17")
+        return {
+            "mode": "tactical21",
+            "size": 21,
+            "features": base["features"] + [
+                "target_roll_norm",
+                "relative_heading_sin",
+                "relative_heading_cos",
+                "relative_speed_norm",
+            ],
+            "description": (
+                "Tactical17 plus target bank, periodic relative heading, and "
+                "relative speed for moving-target WEZ hold control."
+            ),
+        }
+    if mode == "tactical17":
+        return {
+            "mode": "tactical17",
+            "size": 17,
+            "features": [
+                "ownship_roll_norm",
+                "ownship_pitch_norm",
+                "ownship_yaw_sin",
+                "ownship_yaw_cos",
+                "ownship_speed_norm",
+                "ownship_alt_norm",
+                "ownship_health_norm",
+                "delta_n_norm",
+                "delta_e_norm",
+                "delta_d_norm",
+                "ata_norm",
+                "aa_norm",
+                "az_norm",
+                "el_norm",
+                "target_health_norm",
+                "in_wez",
+                "pursuit_score_norm",
+            ],
+            "description": (
+                "Periodic-yaw tactical observation. Yaw is encoded as sine and "
+                "cosine so 359 and 0 degrees remain adjacent; all features are "
+                "bounded to [-1, 1]."
+            ),
+        }
     if mode == "tactical16":
         return {
             "mode": "tactical16",
@@ -203,4 +297,108 @@ def _build_tactical16(ownship_state, target_state, geo_info, wez_config=None) ->
     pursuit_raw  = ata_factor * range_factor                   # [0, 1]
     obs[15] = 2.0 * pursuit_raw - 1.0                         # → [-1, 1]
 
+    return obs
+
+
+def _build_tactical17(ownship_state, target_state, geo_info, wez_config=None) -> np.ndarray:
+    """Tactical observation with a continuous two-channel yaw encoding."""
+    tactical16 = _build_tactical16(
+        ownship_state,
+        target_state,
+        geo_info,
+        wez_config,
+    )
+    yaw_rad = np.deg2rad(float(ownship_state[StateIndex.YAW]))
+    obs = np.empty(17, dtype=np.float32)
+    obs[0:2] = tactical16[0:2]
+    obs[2] = np.sin(yaw_rad)
+    obs[3] = np.cos(yaw_rad)
+    obs[4:] = tactical16[3:]
+    return obs
+
+
+def _build_tactical21(ownship_state, target_state, geo_info, wez_config=None) -> np.ndarray:
+    """Tactical17 plus target maneuver and relative-velocity observability."""
+    tactical17 = _build_tactical17(
+        ownship_state,
+        target_state,
+        geo_info,
+        wez_config,
+    )
+    obs = np.empty(21, dtype=np.float32)
+    obs[:17] = tactical17
+    obs[17] = normalize(float(target_state[StateIndex.ROLL]), -180.0, 180.0)
+    heading_difference_rad = np.deg2rad(
+        (float(target_state[StateIndex.YAW]) - float(ownship_state[StateIndex.YAW]) + 180.0)
+        % 360.0
+        - 180.0
+    )
+    obs[18] = np.sin(heading_difference_rad)
+    obs[19] = np.cos(heading_difference_rad)
+    ownship_speed = float(np.linalg.norm(ownship_state[StateIndex.U : StateIndex.W + 1]))
+    target_speed = float(np.linalg.norm(target_state[StateIndex.U : StateIndex.W + 1]))
+    obs[20] = normalize(target_speed - ownship_speed, -200.0, 200.0)
+    return obs
+
+
+def _body_velocity_to_ned(state) -> np.ndarray:
+    """Rotate body-axis u/v/w velocity into the local NED frame."""
+    roll, pitch, yaw = np.deg2rad(
+        [
+            float(state[StateIndex.ROLL]),
+            float(state[StateIndex.PITCH]),
+            float(state[StateIndex.YAW]),
+        ]
+    )
+    sr, cr = np.sin(roll), np.cos(roll)
+    sp, cp = np.sin(pitch), np.cos(pitch)
+    sy, cy = np.sin(yaw), np.cos(yaw)
+    rotation = np.asarray(
+        [
+            [cp * cy, sr * sp * cy - cr * sy, cr * sp * cy + sr * sy],
+            [cp * sy, sr * sp * sy + cr * cy, cr * sp * sy - sr * cy],
+            [-sp, sr * cp, cr * cp],
+        ],
+        dtype=np.float64,
+    )
+    return rotation @ np.asarray(
+        state[StateIndex.U : StateIndex.W + 1], dtype=np.float64
+    )
+
+
+def _horizontal_los_rate_deg_s(ownship_state, target_state) -> float:
+    relative_position = np.asarray(target_state[:2], dtype=np.float64) - np.asarray(
+        ownship_state[:2], dtype=np.float64
+    )
+    horizontal_range_squared = float(np.dot(relative_position, relative_position))
+    if horizontal_range_squared <= 1.0e-6:
+        return 0.0
+    relative_velocity = (
+        _body_velocity_to_ned(target_state) - _body_velocity_to_ned(ownship_state)
+    )[:2]
+    north, east = relative_position
+    north_rate, east_rate = relative_velocity
+    return float(
+        np.degrees((north * east_rate - east * north_rate) / horizontal_range_squared)
+    )
+
+
+def _build_tactical25(ownship_state, target_state, geo_info, wez_config=None) -> np.ndarray:
+    """Tactical21 plus angular-rate observability for turn synchronization."""
+    tactical21 = _build_tactical21(
+        ownship_state,
+        target_state,
+        geo_info,
+        wez_config,
+    )
+    obs = np.empty(25, dtype=np.float32)
+    obs[:21] = tactical21
+    ownship_yaw_rate = float(ownship_state[StateIndex.R])
+    target_yaw_rate = float(target_state[StateIndex.R])
+    obs[21] = normalize(ownship_yaw_rate, -30.0, 30.0)
+    obs[22] = normalize(target_yaw_rate, -30.0, 30.0)
+    obs[23] = normalize(target_yaw_rate - ownship_yaw_rate, -30.0, 30.0)
+    obs[24] = normalize(
+        _horizontal_los_rate_deg_s(ownship_state, target_state), -30.0, 30.0
+    )
     return obs

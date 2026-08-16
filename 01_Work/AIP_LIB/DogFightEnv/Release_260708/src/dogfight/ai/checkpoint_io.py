@@ -55,34 +55,47 @@ def _apply_policy_weights(
     weights,
     policy_id: str = "default_policy",
 ) -> bool:
+    applied = False
+
+    # On RLlib's new API stack, training happens in LearnerGroup while action
+    # sampling happens in EnvRunner. Both must receive a lightweight warm-start;
+    # otherwise the learner's random state overwrites the loaded policy on the
+    # first training update.
+    learner_group = getattr(algorithm, "learner_group", None)
+    if learner_group is not None and hasattr(learner_group, "set_weights"):
+        learner_group.set_weights({policy_id: weights})
+        applied = True
+
     env_runner = getattr(algorithm, "env_runner", None)
     if env_runner is not None and hasattr(env_runner, "set_state"):
         env_runner.set_state({"rl_module": weights})
-        return True
-    if env_runner is not None and hasattr(env_runner, "module"):
+        applied = True
+    elif env_runner is not None and hasattr(env_runner, "module"):
         env_runner.module.set_state(weights)
-        return True
+        applied = True
 
     module = _get_rl_module(algorithm, policy_id)
     if module is not None and hasattr(module, "set_state"):
         module.set_state(weights)
-        return True
+        applied = True
 
     try:
         policy = algorithm.get_policy(policy_id)
         if policy is not None:
             policy.set_weights(weights)
-            return True
+            applied = True
     except Exception:
         pass
 
-    for candidate in ({policy_id: weights}, weights):
-        try:
-            algorithm.set_weights(candidate)
-            return True
-        except Exception:
-            pass
-    return False
+    if not applied:
+        for candidate in ({policy_id: weights}, weights):
+            try:
+                algorithm.set_weights(candidate)
+                applied = True
+                break
+            except Exception:
+                pass
+    return applied
 
 
 def save_lightweight_policy_bundle(

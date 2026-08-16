@@ -1,0 +1,104 @@
+name: team01_sac_mlp_v2_pursuit_seeded
+script: train_rllib
+
+output:
+  name: team01
+  tag: sac_mlp_v2_pursuit_seeded
+
+env:
+  observation_mode: tactical16
+  target_mode: loiter
+  target_behavior_dll: AIP_BASE_target.dll
+  reward_module: student.sac_flight_safety_reward_v2
+  max_engage_time: 60.0
+  episode_step_limit: 3600
+
+env_config:
+  step_ratio: 6
+  min_altitude: 300.0
+  ownship: [1000.0, 0.0, -7000.0, 0.0, 0.0, 0.0, 300.0]
+  target: [6000.0, 0.0, -7000.0, 0.0, 0.0, 0.0, 300.0]
+  target_loiter:
+    enabled: true
+    bank: 30.0
+    pitch: 0.0
+  ownship_randomization:
+    enabled: true
+    radius: 250.0
+    r_roll: 5.0
+    r_pitch: 5.0
+    r_heading: 15.0
+  wez:
+    angle_deg: 2.0
+    min_range_m: 152.4
+    max_range_m: 914.4
+  reward:
+    step_penalty: -0.01
+    survival_bonus: 0.03
+    win_reward: 100.0
+    loss_reward: -100.0
+    ownship_crash_reward: -120.0
+    target_crash_reward: 100.0
+    timeout_reward: 0.0
+    draw_reward: -10.0
+    guard_fail_penalty: -100.0
+    damage_scale: 0.0
+    altitude_warning_m: 2000.0
+    altitude_floor_m: 300.0
+    altitude_risk_scale: 0.10
+    dive_penalty_scale: 0.05
+    dive_reference_deg: 45.0
+    excess_bank_deg: 60.0
+    excess_bank_scale: 0.02
+    pursuit_scale: 0.50
+    pursuit_half_angle_deg: 60.0
+    pursuit_range_m: 8000.0
+    altitude_hold_target_m: 7000.0
+    altitude_hold_range_m: 3000.0
+    altitude_hold_scale: 0.04
+    level_pitch_scale: 0.02
+    level_roll_scale: 0.005
+
+algo:
+  name: sac
+  framework: torch
+  lr: 3.0e-4
+  gamma: 0.99
+  train_batch_size: 256
+  minibatch_size: 256
+  tau: 0.005
+  target_entropy: auto
+  replay_buffer_capacity: 10000
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+
+runtime:
+  iterations: 100
+  num_env_runners: 0
+  num_envs_per_env_runner: 1
+  rollout_fragment_length: auto
+  batch_mode: truncate_episodes
+  save_lightweight_bundle: true
+  lightweight_bundle_frequency: 10
+  save_native_checkpoint: true
+  native_checkpoint_frequency: 50
+  init_bundle: artifacts/models/team01/sac_mlp_v2_flight_safety_seeded_a2_level
+
+dashboard:
+  enabled: true
+  logdir: artifacts/dashboard
+
+policy_probe:
+  enabled: true
+  interval: 10
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: false
+
+notes: "SAC pursuit stage: preserve qualified flight safety while orienting and closing on loiter target."

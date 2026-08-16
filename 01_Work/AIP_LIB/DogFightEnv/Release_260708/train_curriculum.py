@@ -129,7 +129,7 @@ def env_creator(env_config):
     reward_module = str(cfg.get("reward_module", "")).strip()
     if reward_module:
         reward_fn, reward_config = load_reward_hook(reward_module)
-        cfg.setdefault("reward", reward_config)
+        cfg["reward"] = {**reward_config, **dict(cfg.get("reward", {}))}
     observation_module = str(cfg.get("observation_module", "")).strip()
     if observation_module:
         observation_hook = load_observation_hook(observation_module)

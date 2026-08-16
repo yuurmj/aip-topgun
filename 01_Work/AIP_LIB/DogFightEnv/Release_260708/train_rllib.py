@@ -52,6 +52,10 @@ def _ensure_ray_runtime_env() -> None:
 
     # 2026-05-29: Give slower PCs more time for raylet/GCS startup after shutdown.
     os.environ.setdefault("RAY_raylet_start_wait_time_s", _RAY_RAYLET_START_WAIT_TIME_S)
+    ray_init_kwargs = {}
+    configured_num_cpus = os.environ.get("AIP_RAY_NUM_CPUS")
+    if configured_num_cpus:
+        ray_init_kwargs["num_cpus"] = int(configured_num_cpus)
     ray.shutdown()
     ray.init(
         ignore_reinit_error=True,
@@ -64,6 +68,7 @@ def _ensure_ray_runtime_env() -> None:
                 ],
             }
         },
+        **ray_init_kwargs,
     )
 
 
@@ -84,7 +89,7 @@ def env_creator(env_config):
     reward_module = str(cfg.get("reward_module", "")).strip()
     if reward_module:
         reward_fn, reward_config = load_reward_hook(reward_module)
-        cfg.setdefault("reward", reward_config)
+        cfg["reward"] = {**reward_config, **dict(cfg.get("reward", {}))}
     observation_module = str(cfg.get("observation_module", "")).strip()
     if observation_module:
         observation_hook = load_observation_hook(observation_module)
@@ -342,12 +347,26 @@ def _extract_custom_metrics(result: dict) -> dict:
         "timeout_rate":         metric("timeout"),
         "crash_rate":           metric("crash"),
         "ep_wez_steps":         metric("ep_wez_steps"),
+        "ep_max_consecutive_wez_steps": metric("ep_max_consecutive_wez_steps"),
         "ep_mean_distance":     metric("ep_mean_distance"),
         "ep_min_distance":      metric("ep_min_distance"),
+        "ep_reward_step":       metric("ep_reward_step"),
         "ep_reward_pursuit":    metric("ep_reward_pursuit"),
         "ep_reward_damage":     metric("ep_reward_damage"),
         "ep_reward_safety":     metric("ep_reward_safety"),
         "ep_reward_survival":   metric("ep_reward_survival"),
+        "ep_reward_altitude":   metric("ep_reward_altitude"),
+        "ep_reward_dive":       metric("ep_reward_dive"),
+        "ep_reward_bank":       metric("ep_reward_bank"),
+        "ep_reward_altitude_hold": metric("ep_reward_altitude_hold"),
+        "ep_reward_level_pitch": metric("ep_reward_level_pitch"),
+        "ep_reward_level_roll": metric("ep_reward_level_roll"),
+        "ep_reward_closure": metric("ep_reward_closure"),
+        "ep_reward_alignment": metric("ep_reward_alignment"),
+        "ep_reward_range": metric("ep_reward_range"),
+        "ep_reward_fine_alignment": metric("ep_reward_fine_alignment"),
+        "ep_reward_wez_hold": metric("ep_reward_wez_hold"),
+        "ep_reward_terminal":   metric("ep_reward_terminal"),
         "ep_altitude_penalty_steps": metric("ep_altitude_penalty_steps"),
         "initial_scenario_index": metric("initial_scenario_index"),
         "initial_alpha_deg":    metric("initial_alpha_deg"),
@@ -536,7 +555,7 @@ def parse_args():
     parser.add_argument(
         "--observation-mode",
         default="tactical16",
-        choices=["classic12", "relative14", "tactical16", "custom"],
+        choices=["classic12", "relative14", "tactical16", "tactical17", "tactical21", "tactical25", "custom"],
     )
     parser.add_argument(
         "--observation-module",
@@ -557,6 +576,9 @@ def parse_args():
     parser.add_argument("--max-engage-time", type=float, default=300.0)
     parser.add_argument("--episode-step-limit", type=int, default=18000)
     parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--actor-lr", type=float, default=None)
+    parser.add_argument("--critic-lr", type=float, default=None)
+    parser.add_argument("--alpha-lr", type=float, default=None)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--train-batch-size", type=int, default=4096)
     parser.add_argument("--minibatch-size", type=int, default=256)
@@ -569,6 +591,15 @@ def parse_args():
         type=int,
         default=None,
         help="SAC replay buffer capacity. Ignored by PPO.",
+    )
+    parser.add_argument(
+        "--learning-starts",
+        type=int,
+        default=None,
+        help=(
+            "SAC environment steps collected before learner updates begin. "
+            "Ignored by PPO; RLlib's default is used when omitted."
+        ),
     )
     parser.add_argument(
         "--model-fcnet-hiddens",
@@ -809,6 +840,9 @@ def _build_algorithm_args(args) -> dict:
         "rollout_fragment_length": args.rollout_fragment_length,
         "batch_mode": args.batch_mode,
         "lr": args.lr,
+        "actor_lr": args.actor_lr,
+        "critic_lr": args.critic_lr,
+        "alpha_lr": args.alpha_lr,
         "gamma": args.gamma,
         "train_batch_size": args.train_batch_size,
         "minibatch_size": args.minibatch_size,
@@ -817,6 +851,7 @@ def _build_algorithm_args(args) -> dict:
         "tau": args.tau,
         "target_entropy": args.target_entropy,
         "replay_buffer_capacity": args.replay_buffer_capacity,
+        "learning_starts": args.learning_starts,
         "model_config": _build_model_config_args(args),
         "network_spec": args.network_spec_json,
         "use_lstm": args.use_lstm,
@@ -1214,7 +1249,17 @@ def main():
         _run_with_tune(args, algorithm_name, config, env_config)
         return
 
-    algorithm = config.build_algo()
+    from ray.tune.logger import UnifiedLogger
+
+    rllib_log_dir = (
+        ROOT / "artifacts" / "logs" / args.output_name / args.output_tag / "rllib"
+    )
+    rllib_log_dir.mkdir(parents=True, exist_ok=True)
+
+    def _logger_creator(logger_config):
+        return UnifiedLogger(logger_config, str(rllib_log_dir), loggers=None)
+
+    algorithm = config.build_algo(logger_creator=_logger_creator)
     if args.restore_checkpoint:
         checkpoint_path = Path(args.restore_checkpoint)
         if not checkpoint_path.exists():
@@ -1238,10 +1283,16 @@ def main():
     _CSV_FIELDS = [
         "iter", "sampled_steps", "episodes", "reward_mean", "ep_len_mean",
         "win_rate", "loss_rate", "timeout_rate", "crash_rate",
-        "ep_wez_steps", "ep_mean_distance", "ep_min_distance",
-        "ep_reward_pursuit", "ep_reward_damage", "ep_reward_safety",
-        "ep_reward_survival", "ep_altitude_penalty_steps",
-        "initial_scenario_index",
+        "ep_wez_steps", "ep_max_consecutive_wez_steps",
+        "ep_mean_distance", "ep_min_distance",
+        "ep_reward_step", "ep_reward_pursuit", "ep_reward_damage",
+        "ep_reward_safety", "ep_reward_survival", "ep_reward_altitude",
+        "ep_reward_dive", "ep_reward_bank", "ep_reward_altitude_hold",
+        "ep_reward_level_pitch", "ep_reward_level_roll", "ep_reward_terminal",
+        "ep_reward_closure", "ep_reward_alignment", "ep_reward_range",
+        "ep_reward_fine_alignment", "ep_reward_wez_hold",
+        "ep_altitude_penalty_steps",
+        "initial_scenario_index"
         "initial_alpha_deg", "initial_ata_deg", "initial_aa_deg",
         "initial_distance_m", "final_ata_deg", "final_aa_deg",
         "headon_guard_fail",
