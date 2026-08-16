@@ -1,0 +1,16 @@
+{
+  "end_condition": "target altitude below min",
+  "outcome": "draw",
+  "ownship_health": 1.0,
+  "target_health": 1.0,
+  "damage_dealt_percent": 0.0,
+  "damage_received_percent": 0.0,
+  "ep_min_distance_m": 51.48524849721356,
+  "ep_mean_distance_m": 10275.453263152986,
+  "ep_wez_steps": 0,
+  "wez_entered": false,
+  "crashed": false,
+  "episode_steps": 568,
+  "final_ata_deg": 150.1004582003344,
+  "final_aa_deg": 50.06545820033437
+}

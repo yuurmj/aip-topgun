@@ -40,6 +40,7 @@ from dogfight.ai.rllib_utils import build_algorithm_config, normalize_algorithm_
 from dogfight.ai.student_hooks import load_observation_hook, load_reward_hook
 from dogfight.ai.training.config_io import deep_update, load_experiment_env_config
 from dogfight.ai.training_record import save_training_record
+from dogfight.envs.initial_scenario import describe_initial_scenario
 from dogfight.envs.observation import (
     observation_size as builtin_observation_size,
 )
@@ -367,6 +368,7 @@ def _extract_custom_metrics(result: dict) -> dict:
         "ep_reward_wez_hold": metric("ep_reward_wez_hold"),
         "ep_reward_terminal":   metric("ep_reward_terminal"),
         "ep_altitude_penalty_steps": metric("ep_altitude_penalty_steps"),
+        "initial_scenario_index": metric("initial_scenario_index"),
         "initial_alpha_deg":    metric("initial_alpha_deg"),
         "initial_ata_deg":      metric("initial_ata_deg"),
         "initial_aa_deg":       metric("initial_aa_deg"),
@@ -1025,7 +1027,8 @@ def _build_bundle_metadata(
         **observation_metadata,
         "action_dim": 4,
         "env_class": "DogFightWrapper",
-        "target_mode": args.target_mode,
+        "target_mode": env_config.get("target_mode", args.target_mode),
+        "initial_scenario_summary": describe_initial_scenario(env_config.get("initial_scenario")),
         "record_dir": str(record_dir),
         "use_lstm": args.use_lstm,
         "use_lstm_sac": args.use_lstm_sac,
@@ -1289,6 +1292,7 @@ def main():
         "ep_reward_closure", "ep_reward_alignment", "ep_reward_range",
         "ep_reward_fine_alignment", "ep_reward_wez_hold",
         "ep_altitude_penalty_steps",
+        "initial_scenario_index"
         "initial_alpha_deg", "initial_ata_deg", "initial_aa_deg",
         "initial_distance_m", "final_ata_deg", "final_aa_deg",
         "headon_guard_fail",

@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover - supports direct script execution.
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = PACKAGE_DIR / "static"
-DEFAULT_ENV_ROOT = PACKAGE_DIR.parents[1] / "MyTrainEnv"
+DEFAULT_ENV_ROOT = PACKAGE_DIR.parents[1]
 
 
 class ViewerRepository:

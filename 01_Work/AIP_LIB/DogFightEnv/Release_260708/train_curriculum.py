@@ -85,6 +85,7 @@ from dogfight.ai.student_hooks import (
     load_reward_hook,
 )
 from dogfight.ai.training_record import save_training_record
+from dogfight.envs.initial_scenario import describe_initial_scenario
 from dogfight.envs.observation import (
     observation_size as builtin_observation_size,
 )
@@ -192,6 +193,7 @@ def _build_curriculum_bundle_metadata(
         "action_dim": 4,
         "env_class": "DogFightWrapper",
         "target_mode": env_config.get("target_mode", ""),
+        "initial_scenario_summary": describe_initial_scenario(env_config.get("initial_scenario")),
         "use_lstm": args.use_lstm,
         "use_lstm_sac": args.use_lstm_sac,
         "use_lstm_prioritized_replay": (
@@ -594,6 +596,7 @@ def _extract_custom_metrics(result: dict) -> dict:
         "action_pitch_std":  cm.get("action_pitch_std_mean",       "n/a"),
         "action_rudder_std": cm.get("action_rudder_std_mean",      "n/a"),
         "action_throttle_std": cm.get("action_throttle_std_mean",  "n/a"),
+        "initial_scenario_index": cm.get("initial_scenario_index_mean", "n/a"),
         "initial_alpha_deg": cm.get("initial_alpha_deg_mean",      "n/a"),
         "initial_ata_deg":   cm.get("initial_ata_deg_mean",        "n/a"),
         "initial_aa_deg":    cm.get("initial_aa_deg_mean",         "n/a"),
@@ -629,6 +632,7 @@ _CSV_FIELDS = [
     "action_roll_mean", "action_pitch_mean", "action_rudder_mean",
     "action_throttle_mean", "action_roll_std", "action_pitch_std",
     "action_rudder_std", "action_throttle_std",
+    "initial_scenario_index",
     "initial_alpha_deg", "initial_ata_deg", "initial_aa_deg",
     "initial_distance_m", "final_ata_deg", "final_aa_deg",
     "headon_guard_fail",

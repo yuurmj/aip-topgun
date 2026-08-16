@@ -1,0 +1,28 @@
+{
+  "created_at": "2026-08-07T20:19:54",
+  "checkpoint": "C:\\Users\\Ran\\Desktop\\2026\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\artifacts\\curriculum\\team01\\ppo_mlp_v21_900m_fire_cone_refine\\stage_0_attack_refine_900m_fire_cone_8s\\checkpoints\\iter_0001",
+  "output_dir": "C:\\Users\\Ran\\Desktop\\2026\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\artifacts\\evaluation\\team01\\ppo_mlp_v21_iter0001_900m_eval_30",
+  "episodes_per_scenario": 10,
+  "total_episodes": 30,
+  "max_steps": 220,
+  "base_seed": 200900,
+  "exact_repeat": false,
+  "distance_m": 900.0,
+  "ownship_speed_mps": 264.0,
+  "target_speed_mps": 250.0,
+  "training_updates": 0,
+  "diagnostic_metrics": {
+    "firing_cone_definition": "abs(ATA) <= wez.angle_deg / 2",
+    "firing_cone_pass_threshold": null
+  },
+  "success_criteria": {
+    "overall_crash_rate_max": 0.0,
+    "overall_damage_rate_min": 0.75,
+    "per_scenario_damage_rate_min": 0.6,
+    "mean_target_damage_min": 0.2,
+    "mean_ata_deg_max": 5.0,
+    "mean_abs_roll_deg_max": 15.0,
+    "max_abs_roll_deg_strictly_below": 55.0,
+    "mean_altitude_drop_m_max": 150.0
+  }
+}

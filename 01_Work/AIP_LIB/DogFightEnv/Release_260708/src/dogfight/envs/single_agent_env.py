@@ -25,6 +25,7 @@ from dogfight.ai.hybrid_action_provider import (
 )
 from dogfight.ai.native_bt import AIPilot
 from dogfight.config import FEET_TO_METER, METER_TO_FEET, merge_env_config
+from dogfight.envs.initial_scenario import sample_scenario_pool
 from dogfight.envs.observation import (
     build_observation,
     normalize,
@@ -188,6 +189,11 @@ class DogFightEnv(gym.Env):
                 )
             self._target_action_provider = target_provider
             self._target_action_provider_behavior_tree_only = True
+        self._base_target_mode = str(self.config["target_mode"])
+        self._base_target_loiter = copy.deepcopy(self.config["target_loiter"])
+        self._base_target_autopilot = copy.deepcopy(
+            self.config["target_autopilot"]
+        )
         self._runner_index = self.config.get("_runner_index", "local")
         self._env_index = self.config.get("_env_index", 0)
         self._geo_info = GeometryInfo()
@@ -306,7 +312,7 @@ class DogFightEnv(gym.Env):
         self._ep_reward_components: Dict[str, float] = {}
         self._ep_action_sum = np.zeros(self.num_action, dtype=np.float64)
         self._ep_action_sq_sum = np.zeros(self.num_action, dtype=np.float64)
-        self._initial_scenario_metrics: Dict[str, float] = {}
+        self._initial_scenario_metrics: Dict[str, object] = {}
 
     # Sim expects throttle in [0, 1]; RL policy outputs throttle in [-1, 1].
     _SIM_ACTION_LOW  = np.array([-1., -1., -1., 0.], dtype=np.float32)
@@ -378,14 +384,26 @@ class DogFightEnv(gym.Env):
         super().reset(seed=seed)
         if options:
             self.config = merge_env_config({**self.config, **options})
+            if "target_mode" in options:
+                self._base_target_mode = str(self.config["target_mode"])
+            if "target_loiter" in options:
+                self._base_target_loiter = copy.deepcopy(self.config["target_loiter"])
+            if "target_autopilot" in options:
+                self._base_target_autopilot = copy.deepcopy(
+                    self.config["target_autopilot"]
+                )
             self._episode_step_limit = self.config.get("episode_step_limit")
             self._geometry_guard = self.config.get("geometry_guard", {})
             self._reward_config = self.config["reward"]
 
+        self._restore_target_behavior_config()
         scenario = self.config.get("initial_scenario", {})
         scenario_mode = scenario.get("mode", "default")
         apply_ownship_randomization = True
         if scenario_mode == "two_circle_headon":
+        if scenario_mode == "scenario_pool":
+            self._apply_scenario_pool_initial_scenario(scenario)
+        elif scenario_mode == "two_circle_headon":
             self._apply_two_circle_headon_initial_scenario(scenario)
         elif scenario_mode == "ref_old_random":
             self._apply_ref_old_random_initial_scenario(scenario)
@@ -406,6 +424,7 @@ class DogFightEnv(gym.Env):
                 self._restore_default_initial_conditions()
                 scenario_mode = "default"
         else:
+            self._restore_default_initial_positions()
             self._initial_scenario_metrics = {}
             self._restore_default_initial_conditions()
 
@@ -421,9 +440,12 @@ class DogFightEnv(gym.Env):
 
         # Apply per-episode position randomization if configured
         rand = self.config.get("ownship_randomization", {})
+        # Apply per-episode position randomization if configured
+        rand = self.config.get("ownship_randomization", {})
+        generated_modes = {"scenario_pool", "two_circle_headon", "ref_old_random"}
         if (
             apply_ownship_randomization
-            and scenario_mode != "two_circle_headon"
+            and scenario_mode not in generated_modes
             and rand.get("enabled", False)
         ):
             distance_range = rand.get("distance_range_m")
@@ -1223,6 +1245,73 @@ class DogFightEnv(gym.Env):
         sampled = float(self.np_random.uniform(minimum, maximum))
         self._target_sim._init_speed = sampled
         return sampled
+    def _restore_target_behavior_config(self) -> None:
+        """Restore target controls before a scenario applies episode overrides."""
+        self.config["target_mode"] = self._base_target_mode
+        self.config["target_loiter"] = copy.deepcopy(self._base_target_loiter)
+        self.config["target_autopilot"] = copy.deepcopy(
+            self._base_target_autopilot
+        )
+
+    def _restore_default_initial_positions(self) -> None:
+        """Restore configured baseline states before legacy randomization."""
+        self._set_initial_aircraft_state("ownship", self.config["ownship"])
+        self._set_initial_aircraft_state("target", self.config["target"])
+
+    def _set_initial_aircraft_state(self, flight: str, state: List[float]) -> None:
+        """Apply a validated [N, E, D, roll, pitch, heading, speed] vector."""
+        if len(state) != 7:
+            raise ValueError(
+                f"{flight} initial state must contain "
+                "[N, E, D, roll, pitch, heading, speed]"
+            )
+        self.change_init_position(
+            flight,
+            init_n=float(state[0]),
+            init_e=float(state[1]),
+            init_d=float(state[2]),
+            init_roll=float(state[3]),
+            init_pitch=float(state[4]),
+            init_heading=float(state[5]),
+            init_speed=float(state[6]),
+        )
+
+    def _apply_scenario_pool_initial_scenario(self, scenario: dict) -> None:
+        """Sample and apply one user-defined weighted initial scenario."""
+        sampled, scenario_index = sample_scenario_pool(scenario, self.np_random)
+        if self.config.get("scenario_pool_apply_target_mode", True):
+            target_mode = str(
+                sampled.get("target_mode", self._base_target_mode)
+            )
+        else:
+            target_mode = self._base_target_mode
+        if (
+            target_mode == "behavior_tree"
+            and self._target_action_provider is None
+            and self._target_ai is None
+        ):
+            raise RuntimeError(
+                "scenario_pool selected target_mode='behavior_tree', but the "
+                "environment was not created with a behavior-tree target. Set "
+                "the stage/base target_mode to 'behavior_tree' when any pooled "
+                "scenario uses that mode."
+            )
+        self.config["target_mode"] = target_mode
+        if "target_loiter" in sampled:
+            if not isinstance(sampled["target_loiter"], dict):
+                raise ValueError("scenario target_loiter must be a mapping")
+            self.config["target_loiter"].update(sampled["target_loiter"])
+        if "target_autopilot" in sampled:
+            if not isinstance(sampled["target_autopilot"], dict):
+                raise ValueError("scenario target_autopilot must be a mapping")
+            self.config["target_autopilot"].update(sampled["target_autopilot"])
+
+        self._set_initial_aircraft_state("ownship", sampled["ownship"])
+        self._set_initial_aircraft_state("target", sampled["target"])
+        self._initial_scenario_metrics = {
+            "initial_scenario_index": float(scenario_index),
+            "initial_scenario_name": sampled["name"],
+        }
 
     def _apply_two_circle_headon_initial_scenario(self, scenario: dict) -> None:
         """Place both aircraft on the paper's two-circle head-on curriculum."""
@@ -1422,7 +1511,7 @@ class DogFightEnv(gym.Env):
             fighter._init_pos_alt = lla[2]
 
     def _update_initial_geometry_metrics(self, scenario_mode: str) -> None:
-        if scenario_mode not in ("two_circle_headon", "ref_old_random"):
+        if scenario_mode not in ("scenario_pool", "two_circle_headon", "ref_old_random"):
             return
         ata = abs(float(self._geo_info._get_antenna_train_angle(
             self._ownship_state, self._target_state, True
@@ -1452,7 +1541,14 @@ class DogFightEnv(gym.Env):
     def _wrap_heading(value: float) -> float:
         return float(value % 360.0)
 
-    def add_random_init_position(self, flight="ownship", radius=500.0, r_roll=5, r_pitch=5, r_heading=5):
+    def add_random_init_position(
+        self,
+        flight="ownship",
+        radius=500.0,
+        r_roll=5,
+        r_pitch=5,
+        r_heading=5,
+    ):
         fighter = self._sim if flight == "ownship" else self._target_sim
 
         def jitter(bound) -> float:
@@ -1492,6 +1588,13 @@ class DogFightEnv(gym.Env):
         fighter._init_pos_lat = lla[0]
         fighter._init_pos_lon = lla[1]
         fighter._init_pos_alt = lla[2]
+
+    def _sample_symmetric_offset(self, magnitude: float) -> float:
+        """Sample a signed uniform offset, treating non-positive ranges as zero."""
+        magnitude = float(magnitude)
+        if magnitude <= 0.0:
+            return 0.0
+        return float(self.np_random.uniform(-magnitude, magnitude))
 
     def _append_logs(self):
         self.ownship_log.append(

@@ -81,7 +81,16 @@ class RLActionProvider(ActionProvider):
                 raise ValueError("observation is required when obs_builder is not configured")
             observation = self.obs_builder(context)
 
-        action = self._compute_module_action(observation)
+        action = np.asarray(
+            self._compute_module_action(observation),
+            dtype=np.float32,
+        ).copy()
+        if action.shape != (4,):
+            raise ValueError(
+                f"RL policy action must have shape (4,), got {action.shape}"
+            )
+        action = np.clip(action, -1.0, 1.0)
+        action[3] = (action[3] + 1.0) / 2.0
         action = clip_action(action)
 
         return ActionResult(

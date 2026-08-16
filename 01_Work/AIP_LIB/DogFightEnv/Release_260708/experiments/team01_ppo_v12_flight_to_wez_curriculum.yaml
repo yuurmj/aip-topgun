@@ -1,0 +1,53 @@
+name: team01_ppo_v12_flight_to_wez_curriculum
+script: train_curriculum
+
+output:
+  name: team01
+  tag: ppo_mlp_v12_flight_to_wez_curriculum
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward
+
+algo:
+  name: ppo
+  framework: torch
+  lr: 3.0e-4
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.2
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  num_env_runners: 1
+  save_lightweight_bundle: true
+
+curriculum:
+  stages_module: student.my_curriculum_v12
+
+policy_probe:
+  enabled: true
+  interval: 5
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 5
+  steps: 600
+  episodes: 10
+  print: true
+
+notes: >-
+  v12 two-stage curriculum capped at 30 iterations:
+  up to 20 iterations of level-flight survival followed
+  by up to 10 iterations of real-WEZ hold.

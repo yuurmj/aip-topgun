@@ -1,0 +1,105 @@
+name: team01_ppo_v9_tail_chase_wez_smoke
+script: train_rllib
+
+output:
+  name: team01
+  tag: ppo_mlp_v9_tail_chase_wez_smoke
+
+env:
+  observation_mode: tactical16
+  target_mode: autopilot
+  reward_module: student.my_reward
+  max_engage_time: 60.0
+  episode_step_limit: 3600
+
+env_config:
+  step_ratio: 6
+
+  target_autopilot:
+    heading_cmd: 180.0
+    altitude_cmd: -7000.0
+    speed_cmd: 250.0
+
+  initial_scenario:
+    mode: scenario_pool
+
+    scenarios:
+      - name: tail_chase_2000m
+        weight: 1.0
+
+        ownship:
+          - 8000.0
+          - 0.0
+          - -7000.0
+          - 0.0
+          - 0.0
+          - 180.0
+          - 300.0
+
+        target:
+          - 6000.0
+          - 0.0
+          - -7000.0
+          - 0.0
+          - 0.0
+          - 180.0
+          - 250.0
+
+        target_mode: autopilot
+
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+algo:
+  name: ppo
+  framework: torch
+  lr: 3.0e-4
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.2
+
+  mlp:
+    enabled: true
+    fcnet_hiddens:
+      - 256
+      - 256
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  iterations: 10
+
+  num_env_runners: 1
+  num_envs_per_env_runner: 1
+
+  rollout_fragment_length: auto
+  batch_mode: truncate_episodes
+
+  save_lightweight_bundle: true
+  lightweight_bundle_frequency: 1
+
+  save_native_checkpoint: false
+  native_checkpoint_frequency: 0
+
+dashboard:
+  enabled: true
+  logdir: artifacts/dashboard
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 600
+  episodes: 10
+  print: true

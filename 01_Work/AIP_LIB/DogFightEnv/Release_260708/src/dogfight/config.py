@@ -92,6 +92,32 @@ DEFAULT_ENV_CONFIG = {
     },
     "initial_scenario": {
         "mode": "default",
+        # User-defined weighted scenario pool. Each aircraft vector is
+        # [N, E, D, roll, pitch, heading, speed] in m, deg, and m/s.
+        "scenarios": [],
+        "ownship_randomization": {
+            "enabled": False,
+            "radius": 0.0,
+            "r_roll": 0.0,
+            "r_pitch": 0.0,
+            "r_heading": 0.0,
+            "speed_mps": 0.0,
+        },
+        "target_randomization": {
+            "enabled": False,
+            "radius": 0.0,
+            "r_roll": 0.0,
+            "r_pitch": 0.0,
+            "r_heading": 0.0,
+            "speed_mps": 0.0,
+        },
+        "shared_randomization": {
+            "enabled": False,
+            "n_m": 0.0,
+            "e_m": 0.0,
+            "d_m": 0.0,
+            "speed_mps": 0.0,
+        },
         "legacy_use_random_scenario": True,
         "legacy_use_first_scenario_only": False,
         "legacy_scenario_indices": [0, 1, 2, 3, 4, 5, 6, 7],

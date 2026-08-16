@@ -1,0 +1,16 @@
+{
+  "end_condition": "ownship altitude below min",
+  "outcome": "crash",
+  "ownship_health": 1.0,
+  "target_health": 1.0,
+  "damage_dealt_percent": 0.0,
+  "damage_received_percent": 0.0,
+  "ep_min_distance_m": 61.211090754171835,
+  "ep_mean_distance_m": 9688.57334082708,
+  "ep_wez_steps": 0,
+  "wez_entered": false,
+  "crashed": true,
+  "episode_steps": 469,
+  "final_ata_deg": 173.59063742087562,
+  "final_aa_deg": 4.356362579124379
+}

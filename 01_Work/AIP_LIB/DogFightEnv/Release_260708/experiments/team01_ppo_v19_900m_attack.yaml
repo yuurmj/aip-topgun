@@ -1,0 +1,66 @@
+name: team01_ppo_v19_900m_attack
+script: train_curriculum
+
+output:
+  name: team01
+  tag: ppo_mlp_v19_900m_attack
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v19
+
+algo:
+  name: ppo
+  framework: torch
+  # Conservative fine-tuning from the validated v18 iter_0003 policy.
+  lr: 2.0e-5
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.05
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  num_env_runners: 1
+  save_lightweight_bundle: true
+  # Use the native v18 best checkpoint, not v18 iter_0008 or final_bundle.
+  # Absolute Windows path is intentional: this Ray/PyArrow version rejects
+  # the relative restore path with "URI has empty scheme".
+  restore_checkpoint: "C:/Users/Ran/Desktop/2026/aip-topgun/01_Work/AIP_LIB/DogFightEnv/Release_260708/artifacts/curriculum/team01/ppo_mlp_v18_875m_attack/stage_0_attack_extension_850_875m_8s/checkpoints/iter_0003"
+
+curriculum:
+  stages_module: student.my_curriculum_v19
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 220
+  # More replay samples than v18 so each checkpoint is easier to compare.
+  episodes: 6
+  print: true
+
+notes: >-
+  v19 is a single controlled 25 m extension from the validated v18 875 m
+  policy to 900 m. The scenario pool is 875 m 70% and 900 m 30%, ownship
+  speed is 264 m/s and target speed is 250 m/s. The only initial model is
+  v18 stage-0 iter_0003, which passed the dedicated 30-episode 875 m
+  evaluation. Reward behavior is intentionally unchanged from v18 so the
+  primary experimental variable is distance. The stage is limited to four
+  iterations, with native checkpoint and engagement replay logging every
+  iteration. The left/right 20 m lateral variants compensate the forward
+  offset so their true initial horizontal distance remains exactly 875 m or
+  900 m; no farther distance group is included.

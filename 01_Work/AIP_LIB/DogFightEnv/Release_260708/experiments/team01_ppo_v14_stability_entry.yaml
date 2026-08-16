@@ -1,0 +1,60 @@
+name: team01_ppo_v14_stability_entry
+script: train_curriculum
+
+output:
+  name: team01
+  tag: ppo_mlp_v14_stability_entry
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v14
+
+algo:
+  name: ppo
+  framework: torch
+  lr: 3.0e-4
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.2
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  num_env_runners: 1
+  save_lightweight_bundle: true
+  # Fresh start: do not add resume, restore_checkpoint, init_bundle,
+  # or restart_from_bundle.
+
+curriculum:
+  stages_module: student.my_curriculum_v14
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 120
+  episodes: 3
+  print: true
+
+notes: >-
+  v14 fresh 30-iteration curriculum. Stage 0 uses 10-second broad additive
+  level-flight shaping. Stage 1 starts at 700 m and holds WEZ for 5 seconds
+  with timeout reward 0. Stage 2 starts at 1,100-1,300 m with ownship faster
+  than the target, then learns real WEZ entry and hold. Only ALT, ROLL, and
+  PITCH are used for stability shaping. The official curriculum output remains
+  under artifacts/curriculum; run_v14.ps1 mirrors log files into
+  artifacts/logs/team01/ppo_mlp_v14_stability_entry without modifying the
+  common trainer.

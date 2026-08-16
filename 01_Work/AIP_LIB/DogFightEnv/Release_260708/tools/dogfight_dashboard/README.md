@@ -4,7 +4,9 @@ Local tabbed dashboard for DogFightEnv training metrics and Tacview CSV replay.
 
 ## Run
 
-From `DogFightEnv/MyTrainEnv` or `DogFightEnv/Release`:
+Run the launcher from the environment root you are using (`MyTrainEnv` or
+`Release`). Each copy imports only its sibling `tools/dogfight_dashboard`
+package and uses that environment directory as `--env-root` by default:
 
 ```powershell
 C:\Users\USER\anaconda3\envs\aip\python.exe tools\dashboard.py `
