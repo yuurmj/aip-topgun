@@ -1,0 +1,25 @@
+{
+  "output_name": "team01",
+  "output_tag": "ppo_mlp_v26b_full_dogfight",
+  "algorithm": "ppo",
+  "obs_mode": "tactical16",
+  "status": "in_progress",
+  "current_stage": 0,
+  "current_iteration": 0,
+  "total_iterations_elapsed": 0,
+  "created_at": "2026-08-17T12:37:12",
+  "updated_at": "2026-08-17T12:37:34",
+  "notes": "PPO+MLP v26b trains directly in the Release-provided legacy full-dogfight distribution. Every reset samples one of scenarios 0-7 with official legacy randomization; scenarios 0-4 use the active behavior-tree opponent and 5-7 use legacy loiter. Maximum engagement time is 300 seconds. Observation and 256x256 MLP remain checkpoint-compatible with v21. train_batch_size is 4096 so one remote rollout completes within Ray's 60-second sampling timeout.",
+  "stages": {
+    "0": {
+      "status": "in_progress",
+      "iterations_trained": 0,
+      "advance_reason": null,
+      "final_bundle_dir": null,
+      "last_bundle_dir": null,
+      "last_checkpoint_dir": "C:\\Users\\Ran\\Desktop\\2026\\aip-topgun\\01_Work\\AIP_LIB\\DogFightEnv\\Release_260708\\artifacts\\curriculum\\team01\\ppo_mlp_v21_900m_fire_cone_refine\\stage_0_attack_refine_900m_fire_cone_8s\\checkpoints\\iter_0001",
+      "emergency_dirs": [],
+      "metric_history": []
+    }
+  }
+}

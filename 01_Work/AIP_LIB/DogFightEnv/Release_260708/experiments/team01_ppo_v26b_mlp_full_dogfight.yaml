@@ -1,0 +1,63 @@
+name: team01_ppo_v26b_mlp_full_dogfight
+script: train_curriculum
+
+output:
+  name: team01
+  tag: ppo_mlp_v26b_full_dogfight
+
+env:
+  observation_mode: tactical16
+  target_behavior_dll: AIP_BASE_target.dll
+  reward_module: student.my_reward_v26_mlp
+
+algo:
+  name: ppo
+  framework: torch
+  lr: 5.0e-6
+  gamma: 0.999
+
+  # IMPORTANT:
+  # With one env runner, 8192 steps took about 71 seconds and exceeded
+  # RLlib's 60-second sampling timeout. 4096 keeps one rollout below it.
+  train_batch_size: 4096
+  minibatch_size: 1024
+
+  gae_lambda: 0.97
+  clip_param: 0.05
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [256, 256]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  num_env_runners: 1
+  resume: false
+  restore_checkpoint: "C:/Users/Ran/Desktop/2026/aip-topgun/01_Work/AIP_LIB/DogFightEnv/Release_260708/artifacts/curriculum/team01/ppo_mlp_v21_900m_fire_cone_refine/stage_0_attack_refine_900m_fire_cone_8s/checkpoints/iter_0001"
+
+curriculum:
+  stages_module: student.my_curriculum_v26_mlp
+
+policy_probe:
+  enabled: true
+  interval: 5
+  steps: 4
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 5
+  steps: 3000
+  episodes: 8
+  print: true
+
+notes: >-
+  PPO+MLP v26b trains directly in the Release-provided legacy full-dogfight
+  distribution. Every reset samples one of scenarios 0-7 with official legacy
+  randomization; scenarios 0-4 use the active behavior-tree opponent and 5-7
+  use legacy loiter. Maximum engagement time is 300 seconds. Observation and
+  256x256 MLP remain checkpoint-compatible with v21. train_batch_size is 4096
+  so one remote rollout completes within Ray's 60-second sampling timeout.

@@ -1,0 +1,6 @@
+{
+  "end_condition": "Target FDM output Fall",
+  "outcome": "win",
+  "ownship_health": 1.0,
+  "target_health": 1.0
+}

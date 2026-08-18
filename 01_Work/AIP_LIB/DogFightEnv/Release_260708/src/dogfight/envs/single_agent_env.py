@@ -400,7 +400,6 @@ class DogFightEnv(gym.Env):
         scenario = self.config.get("initial_scenario", {})
         scenario_mode = scenario.get("mode", "default")
         apply_ownship_randomization = True
-        if scenario_mode == "two_circle_headon":
         if scenario_mode == "scenario_pool":
             self._apply_scenario_pool_initial_scenario(scenario)
         elif scenario_mode == "two_circle_headon":
