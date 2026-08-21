@@ -24,11 +24,13 @@ class RLActionProvider(ActionProvider):
         explore: bool = False,
         obs_builder: Callable[[ActionContext], np.ndarray] | None = None,
         confidence: float = 0.9,
+        remap_throttle: bool = True,
     ):
         self.policy_id = policy_id
         self.explore = explore
         self.obs_builder = obs_builder
         self.confidence = confidence
+        self.remap_throttle = bool(remap_throttle)
         self._owns_algorithm = False
         self._module_state = None
         self._debug_lstm_io = False
@@ -90,14 +92,22 @@ class RLActionProvider(ActionProvider):
                 f"RL policy action must have shape (4,), got {action.shape}"
             )
         action = np.clip(action, -1.0, 1.0)
-        action[3] = (action[3] + 1.0) / 2.0
-        action = clip_action(action)
+        if self.remap_throttle:
+            # Unreal/simulator commands use throttle [0, 1].  Composite
+            # policy providers can opt out and perform this conversion once,
+            # after guidance/residual processing has finished.
+            action[3] = (action[3] + 1.0) / 2.0
+            action = clip_action(action)
 
         return ActionResult(
             action=action,
             source="rl",
             confidence=self.confidence,
-            info={"policy_id": self.policy_id, "explore": self.explore},
+            info={
+                "policy_id": self.policy_id,
+                "explore": self.explore,
+                "throttle_mapped": self.remap_throttle,
+            },
         )
 
     def close(self) -> None:
@@ -266,7 +276,7 @@ class DirectSACMLPActionProvider(ActionProvider):
             )
             action = self._torch.tanh(logits[:4]).cpu().numpy()
         return ActionResult(
-            action=clip_action(action),
+            action=np.clip(action, -1.0, 1.0).astype(np.float32),
             source="rl",
             confidence=self.confidence,
             info={"policy_id": self.policy_id, "explore": False, "direct_sac_mlp": True},
@@ -274,6 +284,218 @@ class DirectSACMLPActionProvider(ActionProvider):
 
     def close(self) -> None:
         return None
+
+
+class DirectPPOMLPActionProvider(ActionProvider):
+    """Run a standard deterministic PPO MLP actor without RLlib/Ray."""
+
+    _WEIGHT_KEYS = (
+        "encoder.encoder.net.mlp.0.weight",
+        "encoder.encoder.net.mlp.0.bias",
+        "encoder.encoder.net.mlp.2.weight",
+        "encoder.encoder.net.mlp.2.bias",
+        "pi.net.mlp.0.weight",
+        "pi.net.mlp.0.bias",
+    )
+
+    def __init__(
+        self,
+        bundle_dir: str,
+        policy_id: str = "default_policy",
+        confidence: float = 0.9,
+    ) -> None:
+        import torch
+
+        bundle_path = Path(bundle_dir)
+        self.metadata, _ = load_lightweight_policy_bundle(bundle_path)
+        with gzip.open(bundle_path / "policy_weights.pkl.gz", "rb") as handle:
+            weights = pickle.load(handle)
+        missing = [key for key in self._WEIGHT_KEYS if key not in weights]
+        if missing:
+            raise ValueError(
+                "Direct PPO MLP inference requires standard actor weights; "
+                f"missing={missing}"
+            )
+
+        activation = str(
+            self.metadata.get("algorithm_config", {})
+            .get("model_config", {})
+            .get("fcnet_activation", "relu")
+        ).lower()
+        if activation != "relu":
+            raise ValueError(
+                "Direct PPO MLP inference currently supports relu actors only, "
+                f"got {activation!r}"
+            )
+
+        head_shape = tuple(np.asarray(weights["pi.net.mlp.0.weight"]).shape)
+        if len(head_shape) != 2 or head_shape[0] != 8:
+            raise ValueError(
+                "Direct PPO MLP inference expects an 8-value diagonal-Gaussian "
+                f"policy head for four actions, got shape={head_shape}"
+            )
+        self.policy_id = policy_id
+        self.confidence = confidence
+        self._torch = torch
+        self._weights = {
+            key: torch.as_tensor(weights[key], dtype=torch.float32)
+            for key in self._WEIGHT_KEYS
+        }
+
+    def reset(self, context: ActionContext | None = None) -> None:
+        return None
+
+    def compute_action(self, context: ActionContext) -> ActionResult:
+        import torch.nn.functional as functional
+
+        if context.observation is None:
+            raise ValueError("observation is required for direct PPO MLP inference")
+        tensor = self._torch.as_tensor(
+            np.asarray(context.observation, dtype=np.float32),
+            dtype=self._torch.float32,
+        )
+        with self._torch.no_grad():
+            tensor = functional.relu(
+                functional.linear(
+                    tensor,
+                    self._weights["encoder.encoder.net.mlp.0.weight"],
+                    self._weights["encoder.encoder.net.mlp.0.bias"],
+                )
+            )
+            tensor = functional.relu(
+                functional.linear(
+                    tensor,
+                    self._weights["encoder.encoder.net.mlp.2.weight"],
+                    self._weights["encoder.encoder.net.mlp.2.bias"],
+                )
+            )
+            logits = functional.linear(
+                tensor,
+                self._weights["pi.net.mlp.0.weight"],
+                self._weights["pi.net.mlp.0.bias"],
+            )
+            action = logits[:4].cpu().numpy()
+        return ActionResult(
+            action=np.clip(action, -1.0, 1.0).astype(np.float32),
+            source="rl",
+            confidence=self.confidence,
+            info={"policy_id": self.policy_id, "explore": False, "direct_ppo_mlp": True},
+        )
+
+    def close(self) -> None:
+        return None
+
+
+class DirectPPOLSTMActionProvider(ActionProvider):
+    """Run a standard deterministic PPO tokenizer/LSTM actor without Ray."""
+
+    _WEIGHT_KEYS = (
+        "encoder.encoder.tokenizer.net.mlp.0.weight",
+        "encoder.encoder.tokenizer.net.mlp.0.bias",
+        "encoder.encoder.tokenizer.net.mlp.2.weight",
+        "encoder.encoder.tokenizer.net.mlp.2.bias",
+        "encoder.encoder.lstm.weight_ih_l0",
+        "encoder.encoder.lstm.weight_hh_l0",
+        "encoder.encoder.lstm.bias_ih_l0",
+        "encoder.encoder.lstm.bias_hh_l0",
+        "pi.net.mlp.0.weight",
+        "pi.net.mlp.0.bias",
+    )
+
+    def __init__(
+        self,
+        bundle_dir: str,
+        policy_id: str = "default_policy",
+        confidence: float = 0.9,
+    ) -> None:
+        import torch
+
+        bundle_path = Path(bundle_dir)
+        self.metadata, _ = load_lightweight_policy_bundle(bundle_path)
+        with gzip.open(bundle_path / "policy_weights.pkl.gz", "rb") as handle:
+            weights = pickle.load(handle)
+        missing = [key for key in self._WEIGHT_KEYS if key not in weights]
+        if missing:
+            raise ValueError(
+                "Direct PPO LSTM inference requires standard recurrent weights; "
+                f"missing={missing}"
+            )
+        activation = str(
+            self.metadata.get("algorithm_config", {})
+            .get("model_config", {})
+            .get("fcnet_activation", "relu")
+        ).lower()
+        if activation != "relu":
+            raise ValueError(
+                "Direct PPO LSTM inference currently supports relu tokenizers only, "
+                f"got {activation!r}"
+            )
+
+        first_weight = np.asarray(
+            weights["encoder.encoder.tokenizer.net.mlp.0.weight"]
+        )
+        second_weight = np.asarray(
+            weights["encoder.encoder.tokenizer.net.mlp.2.weight"]
+        )
+        recurrent_weight = np.asarray(weights["encoder.encoder.lstm.weight_hh_l0"])
+        head_weight = np.asarray(weights["pi.net.mlp.0.weight"])
+        hidden_size = int(recurrent_weight.shape[1])
+        if recurrent_weight.shape[0] != 4 * hidden_size:
+            raise ValueError(f"invalid PPO LSTM recurrent shape={recurrent_weight.shape}")
+        if head_weight.shape != (8, hidden_size):
+            raise ValueError(
+                "Direct PPO LSTM expects an 8-value policy head for four actions, "
+                f"got shape={head_weight.shape}"
+            )
+
+        self.policy_id = policy_id
+        self.confidence = confidence
+        self._torch = torch
+        self._token1 = torch.nn.Linear(first_weight.shape[1], first_weight.shape[0])
+        self._token2 = torch.nn.Linear(second_weight.shape[1], second_weight.shape[0])
+        self._lstm = torch.nn.LSTM(second_weight.shape[0], hidden_size, batch_first=True)
+        self._head = torch.nn.Linear(hidden_size, 8)
+        with torch.no_grad():
+            self._token1.weight.copy_(torch.as_tensor(first_weight, dtype=torch.float32))
+            self._token1.bias.copy_(torch.as_tensor(weights[self._WEIGHT_KEYS[1]], dtype=torch.float32))
+            self._token2.weight.copy_(torch.as_tensor(second_weight, dtype=torch.float32))
+            self._token2.bias.copy_(torch.as_tensor(weights[self._WEIGHT_KEYS[3]], dtype=torch.float32))
+            self._lstm.weight_ih_l0.copy_(torch.as_tensor(weights[self._WEIGHT_KEYS[4]], dtype=torch.float32))
+            self._lstm.weight_hh_l0.copy_(torch.as_tensor(recurrent_weight, dtype=torch.float32))
+            self._lstm.bias_ih_l0.copy_(torch.as_tensor(weights[self._WEIGHT_KEYS[6]], dtype=torch.float32))
+            self._lstm.bias_hh_l0.copy_(torch.as_tensor(weights[self._WEIGHT_KEYS[7]], dtype=torch.float32))
+            self._head.weight.copy_(torch.as_tensor(head_weight, dtype=torch.float32))
+            self._head.bias.copy_(torch.as_tensor(weights[self._WEIGHT_KEYS[9]], dtype=torch.float32))
+        for module in (self._token1, self._token2, self._lstm, self._head):
+            module.eval()
+        self._state = None
+
+    def reset(self, context: ActionContext | None = None) -> None:
+        self._state = None
+
+    def compute_action(self, context: ActionContext) -> ActionResult:
+        if context.observation is None:
+            raise ValueError("observation is required for direct PPO LSTM inference")
+        tensor = self._torch.as_tensor(
+            np.asarray(context.observation, dtype=np.float32),
+            dtype=self._torch.float32,
+        ).reshape(1, -1)
+        with self._torch.no_grad():
+            token = self._torch.relu(self._token1(tensor))
+            token = self._torch.relu(self._token2(token)).unsqueeze(1)
+            output, state = self._lstm(token, self._state)
+            self._state = tuple(item.detach() for item in state)
+            logits = self._head(output[:, -1, :])[0]
+            action = logits[:4].cpu().numpy()
+        return ActionResult(
+            action=np.clip(action, -1.0, 1.0).astype(np.float32),
+            source="rl",
+            confidence=self.confidence,
+            info={"policy_id": self.policy_id, "explore": False, "direct_ppo_lstm": True},
+        )
+
+    def close(self) -> None:
+        self._state = None
 
 
 class ObservationFeedbackActionProvider(ActionProvider):
@@ -307,7 +529,11 @@ class ObservationFeedbackActionProvider(ActionProvider):
         result = self.primary.compute_action(context)
         feedback = float(observation[self.observation_index]) * self.action_gains
         return ActionResult(
-            action=clip_action(np.asarray(result.action) + feedback),
+            action=np.clip(
+                np.asarray(result.action, dtype=np.float32) + feedback,
+                -1.0,
+                1.0,
+            ).astype(np.float32),
             source=result.source,
             confidence=result.confidence,
             info={
@@ -367,7 +593,7 @@ class TargetBankActionScaleProvider(ActionProvider):
         action[0] *= roll_scale
         action[2] *= rudder_scale
         return ActionResult(
-            action=clip_action(action),
+            action=np.clip(action, -1.0, 1.0).astype(np.float32),
             source=result.source,
             confidence=result.confidence,
             info={
@@ -414,7 +640,7 @@ class NegativeTargetBankCanonicalActionProvider(ActionProvider):
         action = np.asarray(result.action, dtype=np.float32).copy()
         action[[0, 2]] *= -1.0
         return ActionResult(
-            action=clip_action(action),
+            action=np.clip(action, -1.0, 1.0).astype(np.float32),
             source=result.source,
             confidence=result.confidence,
             info={
@@ -449,7 +675,7 @@ class CanonicalTargetBankActionRestoreProvider(ActionProvider):
         action = np.asarray(result.action, dtype=np.float32).copy()
         action[[0, 2]] *= -1.0
         return ActionResult(
-            action=clip_action(action),
+            action=np.clip(action, -1.0, 1.0).astype(np.float32),
             source=result.source,
             confidence=result.confidence,
             info={
@@ -572,9 +798,11 @@ class BundleMappedDirectSACActionProvider(ActionProvider):
             info=context.info,
         )
         result = self.primary.compute_action(adapted_context)
-        biased_action = clip_action(
-            np.asarray(result.action, dtype=np.float32) + self.policy_bias
-        )
+        biased_action = np.clip(
+            np.asarray(result.action, dtype=np.float32) + self.policy_bias,
+            -1.0,
+            1.0,
+        ).astype(np.float32)
         return ActionResult(
             action=self._map_action(biased_action),
             source="bundle_mapped",

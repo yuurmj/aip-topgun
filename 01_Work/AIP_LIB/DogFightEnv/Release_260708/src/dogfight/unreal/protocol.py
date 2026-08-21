@@ -106,7 +106,11 @@ def pack_simulation_state(state: SimulationState) -> bytes:
 
 
 def pack_client_join_info(info: ClientJoinInfo) -> bytes:
-    team_name = info.team_name.encode("utf-8")[:29]
+    # The server field is a null-terminated 30-byte C string.  Truncating raw
+    # UTF-8 can leave a partial Korean (or other multibyte) character at byte
+    # 29, so discard only an incomplete trailing code point.
+    team_name = info.team_name.split("\x00", 1)[0].encode("utf-8")[:29]
+    team_name = team_name.decode("utf-8", errors="ignore").encode("utf-8")
     team_name = team_name + b"\x00" * (30 - len(team_name))
     return CLIENT_JOIN_INFO_STRUCT.pack(
         int(MessageType.MT_ClientInfo),

@@ -10,6 +10,32 @@ from dogfight.sim.state_schema import StateIndex
 from dogfight.ai.action_provider import ActionContext, ActionProvider, ActionResult, clip_action
 
 
+def _body_velocity_to_ned(state) -> np.ndarray:
+    """Rotate body-axis u/v/w velocity into the NED frame."""
+
+    roll, pitch, yaw = (
+        math.radians(float(state[StateIndex.ROLL])),
+        math.radians(float(state[StateIndex.PITCH])),
+        math.radians(float(state[StateIndex.YAW])),
+    )
+    sr, cr = math.sin(roll), math.cos(roll)
+    sp, cp = math.sin(pitch), math.cos(pitch)
+    sy, cy = math.sin(yaw), math.cos(yaw)
+    rotation = np.asarray(
+        [
+            [cp * cy, sr * sp * cy - cr * sy, cr * sp * cy + sr * sy],
+            [cp * sy, sr * sp * sy + cr * cy, cr * sp * sy - sr * cy],
+            [-sp, sr * cp, cr * cp],
+        ],
+        dtype=np.float64,
+    )
+    body_velocity = np.asarray(
+        [state[StateIndex.U], state[StateIndex.V], state[StateIndex.W]],
+        dtype=np.float64,
+    )
+    return rotation @ body_velocity
+
+
 class PursuitGuidanceActionProvider(ActionProvider):
     """Simple flight-safe pure-pursuit controller used as a curriculum teacher."""
 
@@ -397,8 +423,6 @@ class PursuitGuidanceActionProvider(ActionProvider):
             else self.capture_range_m
         )
         if self.trail_distance_m > 0.0:
-            from student.sac_pursuit_reward_v3 import _body_velocity_to_ned
-
             target_velocity = _body_velocity_to_ned(target)
             horizontal_target_speed = float(np.hypot(
                 target_velocity[0], target_velocity[1]
@@ -423,8 +447,6 @@ class PursuitGuidanceActionProvider(ActionProvider):
             else self.lead_time_s
         )
         if active_lead_time_s != 0.0:
-            from student.sac_pursuit_reward_v3 import _body_velocity_to_ned
-
             relative_velocity = (
                 _body_velocity_to_ned(target) - _body_velocity_to_ned(ownship)
             )
@@ -924,8 +946,6 @@ class PursuitAutopilotActionProvider(ActionProvider):
     def compute_action(self, context: ActionContext) -> ActionResult:
         if context.ownship_state is None or context.target_state is None:
             raise ValueError("ownship_state and target_state are required")
-        from student.sac_pursuit_reward_v3 import _body_velocity_to_ned
-
         ownship = np.asarray(context.ownship_state, dtype=np.float64)
         target = np.asarray(context.target_state, dtype=np.float64)
         delta = target[:3] - ownship[:3]

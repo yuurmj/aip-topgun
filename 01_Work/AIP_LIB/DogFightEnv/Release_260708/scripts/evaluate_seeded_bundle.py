@@ -19,13 +19,15 @@ for path in (ROOT, SRC):
         sys.path.insert(0, str(path))
 
 from DogFightEnvWrapper import DogFightWrapper
+from dogfight.ai.action_provider import ActionProvider, ActionResult
 from dogfight.ai.rl_action_provider import (
     AltitudeRecoveryActionProvider,
     BundleMappedDirectSACActionProvider,
+    DirectPPOLSTMActionProvider,
+    DirectPPOMLPActionProvider,
     DirectSACMLPActionProvider,
     ObservationFeedbackActionProvider,
     NegativeTargetBankCanonicalActionProvider,
-    CanonicalTargetBankActionRestoreProvider,
     RLActionProvider,
     TargetBankActionScaleProvider,
 )
@@ -47,6 +49,7 @@ from dogfight.ai.rllib_utils import (
     build_sac_lstm_module_from_bundle,
 )
 from dogfight.ai.student_hooks import load_reward_hook
+from dogfight.envs.observation import build_observation, observation_size
 from dogfight.sim.state_schema import StateIndex
 
 
@@ -78,6 +81,12 @@ def parse_args():
         ),
     )
     parser.add_argument("--max-engage-time", type=float)
+    parser.add_argument(
+        "--step-ratio",
+        type=int,
+        help="Override simulator substeps per environment observation/action.",
+    )
+    parser.add_argument("--episode-step-limit", type=int)
     parser.add_argument("--control-surface-scale", type=float)
     parser.add_argument("--ownship-speed-mps", type=float)
     parser.add_argument("--target-speed-mps", type=float)
@@ -97,6 +106,11 @@ def parse_args():
         help="Override ref_old_random scenario indices with a comma-separated list.",
     )
     parser.add_argument(
+        "--force-legacy-target-mode",
+        choices=["fixed", "loiter", "autopilot", "behavior_tree"],
+        help="Keep every ref_old_random scenario on one target controller.",
+    )
+    parser.add_argument(
         "--ownship-speed-advantage-mps",
         type=float,
         help=(
@@ -105,9 +119,42 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--target-altitude-guard",
+        action="store_true",
+        help="Enable the standard guarded BT target used by fair submission evaluation.",
+    )
+    parser.add_argument(
+        "--unreal-observation-proxy",
+        choices=["corrected", "estimated", "legacy"],
+        help=(
+            "Rebuild observations from only the fields available in Unreal "
+            "PlaneInfo; estimated also reconstructs HP from the saved WEZ; "
+            "legacy reproduces the previous zero-filled conversion."
+        ),
+    )
+    parser.add_argument(
+        "--provider-action-repeat",
+        type=int,
+        default=1,
+        help=(
+            "Cache the final provider action for this many simulator calls. "
+            "Use the bundle step_ratio to reproduce Unreal command holding."
+        ),
+    )
+    parser.add_argument(
         "--direct-sac-mlp",
         action="store_true",
         help="Run a standard SAC MLP actor directly without starting Ray.",
+    )
+    parser.add_argument(
+        "--direct-ppo-mlp",
+        action="store_true",
+        help="Run a standard deterministic PPO MLP actor directly without Ray.",
+    )
+    parser.add_argument(
+        "--direct-ppo-lstm",
+        action="store_true",
+        help="Run a deterministic PPO tokenizer/LSTM actor directly without Ray.",
     )
     parser.add_argument(
         "--direct-sac-lstm",
@@ -468,6 +515,8 @@ def run_episode(env, seed: int, trace_rows: list[dict] | None = None, trace_inte
                 "target_speed_mps": float(np.linalg.norm(target_velocity)),
                 "ownship_heading_deg": float(state[StateIndex.YAW]),
                 "target_heading_deg": float(target_state[StateIndex.YAW]),
+                "ownship_body_r_deg_s": float(state[StateIndex.R]),
+                "target_body_r_deg_s": float(target_state[StateIndex.R]),
                 "los_heading_error_deg": heading_error,
                 "los_pitch_error_deg": pitch_error,
                 "altitude_m": altitude,
@@ -551,11 +600,39 @@ def summarize(rows: list[dict]) -> dict:
         and row["end_condition"].strip().lower() != "target destroyed"
         for row in rows
     )
+    rulebook_results = []
+    for row in rows:
+        outcome = str(row["outcome"])
+        if outcome == "win":
+            rulebook_results.append("win")
+        elif outcome in {"loss", "crash"}:
+            rulebook_results.append("loss")
+        elif outcome == "draw":
+            rulebook_results.append("draw")
+        else:
+            ownship_health = float(row.get("ownship_health", 0.0))
+            target_health = float(row.get("target_health", 0.0))
+            if ownship_health > target_health + 1.0e-9:
+                rulebook_results.append("win")
+            elif target_health > ownship_health + 1.0e-9:
+                rulebook_results.append("loss")
+            else:
+                rulebook_results.append("draw")
+    rulebook_wins = rulebook_results.count("win")
+    rulebook_losses = rulebook_results.count("loss")
+    rulebook_draws = rulebook_results.count("draw")
     return {
         "episodes": count,
         **outcomes,
         "ownship_kills": ownship_kills,
         "target_crash_wins": target_crash_wins,
+        "rulebook_wins": rulebook_wins,
+        "rulebook_losses": rulebook_losses,
+        "rulebook_draws": rulebook_draws,
+        "rulebook_points": rulebook_wins + 0.5 * rulebook_draws,
+        "rulebook_points_per_episode": (
+            rulebook_wins + 0.5 * rulebook_draws
+        ) / count,
         "crash_rate": outcomes["crash"] / count,
         "timeout_rate": outcomes["timeout"] / count,
         "mean_survival_time_s": sum(row["survival_time_s"] for row in rows) / count,
@@ -602,6 +679,200 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
+def build_unreal_observation_proxy(mode: str, contract: str):
+    health = {"ownship": 1.0, "target": 1.0}
+    previous_time: float | None = None
+
+    def body_to_ned(state) -> np.ndarray:
+        roll, pitch, yaw = np.deg2rad(
+            [
+                float(state[StateIndex.ROLL]),
+                float(state[StateIndex.PITCH]),
+                float(state[StateIndex.YAW]),
+            ]
+        )
+        sr, cr = np.sin(roll), np.cos(roll)
+        sp, cp = np.sin(pitch), np.cos(pitch)
+        sy, cy = np.sin(yaw), np.cos(yaw)
+        rotation = np.asarray(
+            [
+                [cp * cy, sr * sp * cy - cr * sy, cr * sp * cy + sr * sy],
+                [cp * sy, sr * sp * sy + cr * cy, cr * sp * sy - sr * cy],
+                [-sp, sr * cp, cr * cp],
+            ],
+            dtype=np.float64,
+        )
+        return rotation @ np.asarray(
+            state[StateIndex.U : StateIndex.W + 1], dtype=np.float64
+        )
+
+    def reconstruct(state, estimated_health: float = 1.0) -> np.ndarray:
+        source = np.asarray(state, dtype=np.float64)
+        restored = np.zeros(51, dtype=np.float32)
+        if contract == "legacy":
+            restored[StateIndex.N] = source[StateIndex.N]
+            restored[StateIndex.E] = source[StateIndex.E]
+            restored[StateIndex.D] = max(0.0, -source[StateIndex.D])
+            restored[StateIndex.ROLL : StateIndex.YAW + 1] = source[
+                StateIndex.ROLL : StateIndex.YAW + 1
+            ]
+            world_ned = body_to_ned(source)
+            restored[StateIndex.U : StateIndex.W + 1] = [
+                world_ned[0],
+                world_ned[1],
+                -world_ned[2],
+            ]
+            return restored
+
+        restored[StateIndex.N : StateIndex.W + 1] = source[
+            StateIndex.N : StateIndex.W + 1
+        ]
+        restored[StateIndex.P : StateIndex.R + 1] = source[
+            StateIndex.P : StateIndex.R + 1
+        ]
+        restored[StateIndex.KCAS] = float(
+            np.linalg.norm(source[StateIndex.U : StateIndex.W + 1])
+        )
+        restored[StateIndex.SIM_TIME] = source[StateIndex.SIM_TIME]
+        restored[StateIndex.ALT] = max(0.0, -source[StateIndex.D])
+        restored[StateIndex.HEALTH] = estimated_health
+        return restored
+
+    def observation_fn(ownship_state, target_state, geo_info, wez_config):
+        nonlocal previous_time
+        current_time = float(ownship_state[StateIndex.SIM_TIME])
+        if previous_time is None or current_time < previous_time:
+            health["ownship"] = 1.0
+            health["target"] = 1.0
+            previous_time = current_time
+        ownship_restored = reconstruct(ownship_state, health["ownship"])
+        target_restored = reconstruct(target_state, health["target"])
+        if contract == "estimated" and previous_time is not None and wez_config:
+            dt = max(0.0, current_time - previous_time)
+            minimum = float(wez_config.get("min_range_m", 0.0))
+            maximum = float(wez_config.get("max_range_m", 0.0))
+            width = maximum - minimum
+            distance = float(geo_info._get_distance(
+                ownship_restored, target_restored
+            ))
+            if width > 0.0 and minimum <= distance <= maximum and dt > 0.0:
+                damage = ((maximum - distance) / width) * dt
+                half_angle = float(wez_config.get("angle_deg", 0.0)) / 2.0
+                own_ata = abs(float(geo_info._get_antenna_train_angle(
+                    ownship_restored, target_restored, False
+                )))
+                target_ata = abs(float(geo_info._get_antenna_train_angle(
+                    target_restored, ownship_restored, False
+                )))
+                if own_ata <= half_angle:
+                    health["target"] -= damage
+                if target_ata <= half_angle:
+                    health["ownship"] -= damage
+                ownship_restored[StateIndex.HEALTH] = health["ownship"]
+                target_restored[StateIndex.HEALTH] = health["target"]
+        previous_time = current_time
+        return build_observation(
+            mode,
+            ownship_restored,
+            target_restored,
+            geo_info,
+            wez_config,
+        )
+
+    return observation_fn
+
+
+class RepeatedActionProvider(ActionProvider):
+    """Hold the final provider output across simulator substeps."""
+
+    def __init__(self, primary: ActionProvider, repeat: int) -> None:
+        self.primary = primary
+        self.repeat = max(1, int(repeat))
+        self._count = 0
+        self._cached: ActionResult | None = None
+
+    def reset(self, context=None) -> None:
+        self._count = 0
+        self._cached = None
+        self.primary.reset(context)
+
+    def compute_action(self, context):
+        if self._cached is None or self._count % self.repeat == 0:
+            result = self.primary.compute_action(context)
+            self._cached = ActionResult(
+                action=np.asarray(result.action, dtype=np.float32).copy(),
+                source=result.source,
+                confidence=result.confidence,
+                info=dict(result.info),
+            )
+        self._count += 1
+        assert self._cached is not None
+        return ActionResult(
+            action=self._cached.action.copy(),
+            source=self._cached.source,
+            confidence=self._cached.confidence,
+            info={**self._cached.info, "provider_action_repeat": self.repeat},
+        )
+
+    def close(self) -> None:
+        self.primary.close()
+
+
+def describe_evaluation_options(args, env_config, saved_canonicalization: bool) -> dict:
+    """Return the effective settings needed to compare summary files safely."""
+    scenario = dict(env_config.get("initial_scenario", {}))
+    legacy_randomization = dict(scenario.get("legacy_randomization", {}))
+    target_guard = env_config.get("target_altitude_guard", {})
+    guidance = env_config.get("pursuit_guidance_residual", {})
+    return {
+        "env_config_bundle_dir": (
+            str(Path(args.env_config_bundle_dir).resolve())
+            if getattr(args, "env_config_bundle_dir", None)
+            else None
+        ),
+        "observation_mode": env_config.get("observation_mode"),
+        "target_mode": env_config.get("target_mode"),
+        "target_behavior_dll": env_config.get("target_behavior_dll"),
+        "max_engage_time": env_config.get("max_engage_time"),
+        "step_ratio": env_config.get("step_ratio"),
+        "episode_step_limit": env_config.get("episode_step_limit"),
+        "control_surface_scale": env_config.get("control_surface_scale"),
+        "initial_scenario_mode": scenario.get("mode"),
+        "legacy_scenario_indices": scenario.get("legacy_scenario_indices"),
+        "ownship_speed_advantage_mps": legacy_randomization.get(
+            "ownship_speed_advantage_mps"
+        ),
+        "target_speed_range_mps": env_config.get("target_speed_range_mps"),
+        "ownship_randomization": env_config.get("ownship_randomization"),
+        "target_altitude_guard": target_guard,
+        "unreal_observation_proxy": args.unreal_observation_proxy,
+        "provider_action_repeat": int(args.provider_action_repeat),
+        "provider_selection": {
+            "ownship_bt_only": bool(args.ownship_bt_only),
+            "pursuit_guidance_only": bool(args.pursuit_guidance_only),
+            "pursuit_autopilot_only": bool(args.pursuit_autopilot_only),
+            "direct_sac_mlp": bool(args.direct_sac_mlp),
+            "direct_sac_lstm": bool(args.direct_sac_lstm),
+            "direct_ppo_mlp": bool(args.direct_ppo_mlp),
+            "direct_ppo_lstm": bool(args.direct_ppo_lstm),
+            "switch_to_bt_after_wez_steps": getattr(
+                args, "switch_to_bt_after_wez_steps", None
+            ),
+        },
+        "canonicalize_negative_target_bank": bool(
+            saved_canonicalization or args.canonicalize_negative_target_bank
+        ),
+        "saved_guidance_residual_enabled": bool(
+            guidance.get("enabled", False)
+            and not args.disable_saved_guidance_residual
+        ),
+        "saved_guidance_residual_scale": guidance.get("residual_scale"),
+        "saved_guidance_near_residual_scale": guidance.get(
+            "near_residual_scale"
+        ),
+    }
+
+
 def main():
     args = parse_args()
     bundle_dir = Path(args.bundle_dir).resolve()
@@ -623,6 +894,7 @@ def main():
 
         rows = []
         target_mode = None
+        evaluation_options = None
         for seed in seeds:
             seed_output = output_dir / f"seed_{seed}"
             current = replace_option(child_argv, "--seeds", str(seed))
@@ -636,6 +908,13 @@ def main():
                 (seed_output / "summary.json").read_text(encoding="utf-8")
             )
             target_mode = child["target_mode"]
+            child_options = child.get("evaluation_options")
+            if evaluation_options is None:
+                evaluation_options = child_options
+            elif child_options != evaluation_options:
+                raise RuntimeError(
+                    "fresh-process children used different evaluation options"
+                )
             rows.extend(child["episodes"])
 
         csv_path = output_dir / "episodes.csv"
@@ -648,6 +927,7 @@ def main():
             "target_mode": target_mode,
             "seeds": seeds,
             "fresh_process_per_seed": True,
+            "evaluation_options": evaluation_options,
             "summary": summarize(rows),
             "episodes": rows,
         }
@@ -667,8 +947,26 @@ def main():
         else bundle_dir
     )
     env_config = load_bundle_env_config(env_config_bundle_dir)
+    saved_negative_bank_canonicalization = bool(
+        env_config.get("canonicalize_negative_target_bank", False)
+    )
+    if saved_negative_bank_canonicalization:
+        # Match the Unreal submission path: the provider mirrors/restores only
+        # the actor, then guidance is composed in the original frame.  Leaving
+        # this enabled in DogFightEnv would mirror the observation and restore
+        # the final combined action a second time.
+        env_config["canonicalize_negative_target_bank"] = False
     if args.target_mode:
         env_config["target_mode"] = args.target_mode
+    if args.target_altitude_guard:
+        env_config["target_altitude_guard"] = {
+            "enabled": True,
+            "trigger_altitude_m": 3500.0,
+            "release_altitude_m": 5000.0,
+            "roll_level_gain": 0.02,
+            "pull_up_action": -1.0,
+            "throttle_action": 1.0,
+        }
     if args.target_loiter_bank_deg is not None:
         env_config["target_mode"] = "loiter"
         env_config["target_loiter"] = {
@@ -698,6 +996,12 @@ def main():
         }
     if args.max_engage_time is not None:
         env_config["max_engage_time"] = args.max_engage_time
+    if args.step_ratio is not None:
+        if args.step_ratio <= 0:
+            raise ValueError("--step-ratio must be positive")
+        env_config["step_ratio"] = int(args.step_ratio)
+    if args.episode_step_limit is not None:
+        env_config["episode_step_limit"] = int(args.episode_step_limit)
     if args.control_surface_scale is not None:
         env_config["control_surface_scale"] = args.control_surface_scale
     if args.ownship_speed_mps is not None:
@@ -764,6 +1068,10 @@ def main():
         )
         scenario["legacy_randomization"] = randomization
         env_config["initial_scenario"] = scenario
+    if args.force_legacy_target_mode is not None:
+        scenario = dict(env_config.get("initial_scenario", {}))
+        scenario["legacy_force_target_mode"] = args.force_legacy_target_mode
+        env_config["initial_scenario"] = scenario
     env_config["target_behavior_dll"] = args.target_behavior_dll
 
     reward_fn = None
@@ -824,6 +1132,10 @@ def main():
         )
     elif args.ownship_bt_only:
         provider = BTActionProvider(dll_name=args.ownship_bt_dll)
+    elif args.direct_ppo_mlp:
+        provider = DirectPPOMLPActionProvider(bundle_dir=str(bundle_dir))
+    elif args.direct_ppo_lstm:
+        provider = DirectPPOLSTMActionProvider(bundle_dir=str(bundle_dir))
     elif args.direct_sac_mlp:
         provider = DirectSACMLPActionProvider(bundle_dir=str(bundle_dir))
         if args.recovery_bundle_dir:
@@ -845,16 +1157,16 @@ def main():
             bundle_dir=str(bundle_dir),
             algorithm_factory=build_sac_lstm_module_from_bundle,
             explore=False,
+            remap_throttle=False,
         )
     else:
         provider = RLActionProvider(
             bundle_dir=str(bundle_dir),
             algorithm_factory=build_algorithm_from_bundle,
             explore=False,
+            remap_throttle=False,
         )
-    if bool(env_config.get("canonicalize_negative_target_bank", False)):
-        provider = CanonicalTargetBankActionRestoreProvider(provider)
-    elif args.canonicalize_negative_target_bank:
+    if saved_negative_bank_canonicalization or args.canonicalize_negative_target_bank:
         provider = NegativeTargetBankCanonicalActionProvider(provider)
     guidance_residual = env_config.get("pursuit_guidance_residual", {})
     if (
@@ -1131,10 +1443,22 @@ def main():
             max_distance_m=args.switch_to_hold_guidance_distance_m,
             max_ata_deg=args.switch_to_hold_guidance_ata_deg,
         )
+    if args.provider_action_repeat > 1:
+        provider = RepeatedActionProvider(provider, args.provider_action_repeat)
+    proxy_observation_fn = None
+    proxy_observation_size = None
+    if args.unreal_observation_proxy:
+        proxy_mode = str(env_config.get("observation_mode", "tactical16"))
+        proxy_observation_fn = build_unreal_observation_proxy(
+            proxy_mode, args.unreal_observation_proxy
+        )
+        proxy_observation_size = observation_size(proxy_mode)
     env = DogFightWrapper(
         env_config=env_config,
         ownship_action_provider=provider,
         reward_fn=reward_fn,
+        observation_fn=proxy_observation_fn,
+        observation_size=proxy_observation_size,
     )
     try:
         rows = []
@@ -1172,6 +1496,10 @@ def main():
         "bundle_dir": str(bundle_dir),
         "target_mode": env_config["target_mode"],
         "seeds": seeds,
+        "fresh_process_per_seed": False,
+        "evaluation_options": describe_evaluation_options(
+            args, env_config, saved_negative_bank_canonicalization
+        ),
         "summary": summarize(rows),
         "episodes": rows,
     }

@@ -47,9 +47,8 @@ for p in (ROOT, SRC):
 
 from dogfight.ai.bt_action_provider import BTActionProvider
 from dogfight.ai.bt_rule_manager import activate_rule_xml
+from dogfight.ai.bundle_runtime import build_bundle_runtime
 from dogfight.ai.hybrid_action_provider import HybridActionProvider
-from dogfight.ai.rl_action_provider import RLActionProvider
-from dogfight.ai.rllib_utils import build_algorithm_from_bundle
 from dogfight.ai.student_hooks import load_observation_hook
 from dogfight.unreal import AIType, ProviderCommandPolicy, UnrealAIPilotUDPClient
 
@@ -59,16 +58,20 @@ from dogfight.unreal import AIType, ProviderCommandPolicy, UnrealAIPilotUDPClien
 # =============================================================================
 
 TEAM_NAME = "team01"                               # TODO: 팀 이름
-SERVER_IP = "221.151.77.208"                       # TODO: 경진대회 서버 IP
+SERVER_IP = "127.0.0.1"                            # 로컬 BattleServer 기본값
 SERVER_PORT = 9999
 
 # 사용할 백엔드 모드 선택: "rl" | "bt" | "hybrid"
 MODE = "rl"
 
 # RL 모드 설정
-BUNDLE_DIR = "artifacts/models/team01/v1"          # TODO: 학습된 모델 경로
-OBSERVATION_MODE = "tactical16"                    # 학습 시 사용한 관측 모드와 동일해야 함
-OBSERVATION_MODULE = ""                            # custom 관측이면 "student.my_observation"
+BUNDLE_DIR = (
+    "artifacts/models/team01/"
+    "sac_mlp_v2_submission_a437_actor_a687_runtime"
+)                                                   # 최종 선발 후 한 번 더 고정
+OBSERVATION_MODE = ""                              # 빈 값이면 bundle metadata 사용
+OBSERVATION_MODULE = ""                            # 빈 값이면 bundle metadata 사용
+USE_DIRECT_MLP = True                              # Ray 없이 동일 SAC MLP actor 직접 실행
 
 # BT 모드 설정
 # - 기본 배포 Rule은 Rule_forTraining.xml입니다.
@@ -86,7 +89,8 @@ AI_TYPE = AIType.ReinforcementLearning
 HEARTBEAT_SEC = 1.0
 COMMAND_DELAY_SEC = 0.0
 RECV_TIMEOUT_SEC = 0.2
-ACTION_REPEAT = 6          # 학습 step_ratio=6과 맞춰 6개 PlaneInfo pair마다 새 policy 호출
+ACTION_REPEAT = 1          # 최종 명령/유도는 매 PlaneInfo pair마다 갱신
+OBSERVATION_REPEAT = 6     # 학습과 같이 MLP 관측은 6프레임 간격으로 갱신
 DEBUG_ACTION_REPEAT = False
 
 
@@ -118,24 +122,29 @@ def build_action_provider():
         )
 
     print(f"[{TEAM_NAME}] RL 모델 로드: {bundle_path}")
-    rl_provider = RLActionProvider(
-        bundle_dir=str(bundle_path),
-        algorithm_factory=build_algorithm_from_bundle,
+    runtime = build_bundle_runtime(
+        bundle_path,
+        for_unreal=True,
+        use_direct_mlp=USE_DIRECT_MLP,
     )
+    rl_provider = runtime.provider
 
     if MODE == "rl":
         print(f"[{TEAM_NAME}] RL 전용 모드")
-        return rl_provider
+        return rl_provider, runtime
 
     # hybrid
     bt_provider = BTActionProvider(dll_name=BT_DLL)
     print(f"[{TEAM_NAME}] Hybrid 모드: {HYBRID_MODE} (scale={RESIDUAL_SCALE}, alpha={ALPHA})")
-    return HybridActionProvider(
-        primary_provider=rl_provider,
-        secondary_provider=bt_provider,
-        mode=HYBRID_MODE,
-        alpha=ALPHA,
-        residual_scale=RESIDUAL_SCALE,
+    return (
+        HybridActionProvider(
+            primary_provider=rl_provider,
+            secondary_provider=bt_provider,
+            mode=HYBRID_MODE,
+            alpha=ALPHA,
+            residual_scale=RESIDUAL_SCALE,
+        ),
+        runtime,
     )
 
 
@@ -147,22 +156,47 @@ def main():
         print(f"BT DLL/XML: {BT_DLL} / {BT_RULE_XML}")
 
     with activate_rule_xml(BT_RULE_XML, ROOT):
-        action_provider = build_action_provider()
+        built = build_action_provider()
+        if MODE == "bt":
+            action_provider = built
+            runtime = None
+        else:
+            action_provider, runtime = built
+        observation_module = OBSERVATION_MODULE or (
+            runtime.observation_module if runtime else ""
+        )
         observation_hook = (
-            load_observation_hook(OBSERVATION_MODULE)
-            if OBSERVATION_MODULE
+            load_observation_hook(observation_module)
+            if observation_module
             else None
+        )
+        observation_mode = (
+            observation_hook["mode"]
+            if observation_hook
+            else OBSERVATION_MODE
+            or (runtime.observation_mode if runtime else "relative14")
+        )
+        action_repeat = ACTION_REPEAT
+        observation_repeat = (
+            runtime.action_repeat if runtime else OBSERVATION_REPEAT
+        )
+        print(
+            f"[{TEAM_NAME}] 관측={observation_mode}, action_repeat={action_repeat}, "
+            f"observation_repeat={observation_repeat}, "
+            f"direct_mlp={USE_DIRECT_MLP if runtime else False}"
         )
         command_policy = ProviderCommandPolicy(
             action_provider=action_provider,
-            observation_mode=observation_hook["mode"] if observation_hook else OBSERVATION_MODE,
+            observation_mode=observation_mode,
             observation_fn=observation_hook["build_observation"]
             if observation_hook
             else None,
             ownship_force_side=1,
             target_force_side=2,
-            action_repeat=ACTION_REPEAT,
+            action_repeat=action_repeat,
+            observation_repeat=observation_repeat,
             debug_action_repeat=DEBUG_ACTION_REPEAT,
+            wez_config=runtime.env_config.get("wez") if runtime else None,
         )
 
         client = UnrealAIPilotUDPClient(

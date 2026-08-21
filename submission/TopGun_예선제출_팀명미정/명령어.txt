@@ -1,0 +1,27 @@
+[사전 조건]
+- BattleServer와 본 AI는 같은 Windows PC에서 실행합니다.
+- BattleServer에서 OpenServer를 누른 뒤 아래 명령을 실행합니다.
+- 팀명 확정 후 team_name.txt의 한 줄을 실제 팀명으로 바꿉니다.
+- 권장 실행은 AI_실행.bat입니다. 이 파일은 활성 conda 환경과
+  %USERPROFILE%\anaconda3\envs\aip 또는 miniconda3\envs\aip를 자동 탐색합니다.
+
+[0. 권장 실행]
+AI_실행.bat
+
+[1. 서버 없이 모델 파일 검증]
+conda activate aip
+python run_unreal_inference.py --mode rl --bundle-dir model --team-name-file team_name.txt --validate-only
+
+[2. 실제 경기 실행]
+python run_unreal_inference.py --mode rl --bundle-dir model --team-name-file team_name.txt --server-ip 127.0.0.1 --server-port 9999 --action-repeat 1 --observation-repeat 6
+
+[3. 로컬 UDP 송수신 자체 검사]
+python validate_unreal_udp_roundtrip.py --bundle-dir model --pairs 1200 --timeout-sec 60
+
+[3-1. 반대 진영/역순 패킷 자체 검사]
+python validate_unreal_udp_roundtrip.py --bundle-dir model --pairs 1200 --timeout-sec 60 --plane-id 1 --reverse-packet-order
+
+[4. 문제 확인용 실행]
+python run_unreal_inference.py --mode rl --bundle-dir model --team-name-file team_name.txt --server-ip 127.0.0.1 --server-port 9999 --action-repeat 1 --observation-repeat 6 --packet-monitor
+
+종료: 터미널에서 Ctrl+C

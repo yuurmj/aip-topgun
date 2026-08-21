@@ -1,0 +1,12 @@
+추가 설치 라이브러리: 없음
+
+본 프로젝트는 운영진 제공 DogFightEnv 학습 환경의 Python을 사용합니다.
+직접 추론에 필요한 외부 패키지는 해당 환경에 포함된 numpy와 CPU용 torch뿐입니다.
+Ray/RLlib, Gymnasium, CUDA/GPU는 경기 실행 경로에서 사용하지 않습니다.
+
+현재 검증 환경:
+- Windows
+- Python 3.11.15
+- numpy 2.2.6
+- torch 2.13.0+cpu
+

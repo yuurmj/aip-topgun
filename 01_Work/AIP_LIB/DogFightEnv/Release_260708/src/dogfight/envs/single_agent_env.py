@@ -1442,6 +1442,18 @@ class DogFightEnv(gym.Env):
         else:
             self.config["target_mode"] = "behavior_tree"
 
+        forced_target_mode = scenario.get("legacy_force_target_mode")
+        if forced_target_mode is not None:
+            forced_target_mode = str(forced_target_mode)
+            if forced_target_mode not in {
+                "fixed", "loiter", "autopilot", "behavior_tree"
+            }:
+                raise ValueError(
+                    "legacy_force_target_mode must be fixed, loiter, "
+                    "autopilot, or behavior_tree"
+                )
+            self.config["target_mode"] = forced_target_mode
+
         self._initial_scenario_metrics = {
             "legacy_scenario_index": float(scenario_index),
             "initial_ownship_speed_mps": float(self._sim._init_speed),

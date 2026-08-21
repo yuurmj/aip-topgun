@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -33,7 +34,8 @@ from dogfight.ai.rl_action_provider import (
     NegativeTargetBankCanonicalActionProvider,
     TargetBankActionScaleProvider,
 )
-from scripts.evaluate_seeded_bundle import summarize
+from scripts.evaluate_seeded_bundle import describe_evaluation_options, summarize
+from scripts.rank_evaluation_summaries import describe_conditions
 from student.sac_flight_safety_reward import MY_REWARD_CONFIG, compute_reward
 from student.sac_flight_safety_reward_v2 import (
     MY_REWARD_CONFIG as V2_REWARD_CONFIG,
@@ -469,6 +471,79 @@ class ControlAuthorityTests(unittest.TestCase):
 
 
 class EvaluationSummaryTests(unittest.TestCase):
+    def test_ranker_marks_legacy_conditions_and_infers_constant_speed_delta(self):
+        conditions = describe_conditions(
+            {
+                "target_mode": "behavior_tree",
+                "fresh_process_per_seed": True,
+                "episodes": [
+                    {"initial_speed_mps": 250.0, "initial_target_speed_mps": 250.0},
+                    {"initial_speed_mps": 230.0, "initial_target_speed_mps": 230.0},
+                ],
+            }
+        )
+        self.assertFalse(conditions["options_verified"])
+        self.assertEqual(conditions["target_mode"], "behavior_tree")
+        self.assertEqual(conditions["ownship_speed_advantage_mps"], 0.0)
+        self.assertTrue(conditions["fresh_process_per_seed"])
+
+    def test_evaluation_options_capture_comparison_critical_settings(self):
+        args = SimpleNamespace(
+            env_config_bundle_dir=None,
+            unreal_observation_proxy="corrected",
+            provider_action_repeat=1,
+            ownship_bt_only=False,
+            pursuit_guidance_only=False,
+            pursuit_autopilot_only=False,
+            direct_sac_mlp=True,
+            direct_sac_lstm=False,
+            direct_ppo_mlp=False,
+            direct_ppo_lstm=False,
+            switch_to_bt_after_wez_steps=1,
+            canonicalize_negative_target_bank=False,
+            disable_saved_guidance_residual=False,
+        )
+        env_config = {
+            "observation_mode": "tactical25",
+            "target_mode": "behavior_tree",
+            "target_behavior_dll": "AIP_BASE_target.dll",
+            "max_engage_time": 120.0,
+            "step_ratio": 6,
+            "episode_step_limit": 7200,
+            "control_surface_scale": 1.0,
+            "initial_scenario": {
+                "mode": "legacy_random",
+                "legacy_scenario_indices": [0],
+                "legacy_randomization": {"ownship_speed_advantage_mps": 0.0},
+            },
+            "target_speed_range_mps": [190.0, 260.0],
+            "ownship_randomization": {"enabled": False},
+            "target_altitude_guard": {"enabled": True},
+            "pursuit_guidance_residual": {
+                "enabled": True,
+                "residual_scale": [0.2, 0.2, 0.2, 0.05],
+                "near_residual_scale": [0.0, 0.0, 0.0, 0.05],
+            },
+        }
+
+        options = describe_evaluation_options(
+            args, env_config, saved_canonicalization=True
+        )
+
+        self.assertEqual(options["ownship_speed_advantage_mps"], 0.0)
+        self.assertEqual(options["unreal_observation_proxy"], "corrected")
+        self.assertEqual(options["provider_action_repeat"], 1)
+        self.assertTrue(options["provider_selection"]["direct_sac_mlp"])
+        self.assertEqual(
+            options["provider_selection"]["switch_to_bt_after_wez_steps"], 1
+        )
+        self.assertTrue(options["canonicalize_negative_target_bank"])
+        self.assertTrue(options["saved_guidance_residual_enabled"])
+        self.assertEqual(
+            options["saved_guidance_residual_scale"], [0.2, 0.2, 0.2, 0.05]
+        )
+        self.assertIsNone(options["env_config_bundle_dir"])
+
     def test_target_crash_win_is_not_counted_as_ownship_kill(self):
         base = {
             "outcome": "win",
@@ -494,6 +569,36 @@ class EvaluationSummaryTests(unittest.TestCase):
         self.assertEqual(summary["win"], 2)
         self.assertEqual(summary["ownship_kills"], 1)
         self.assertEqual(summary["target_crash_wins"], 1)
+
+    def test_rulebook_timeout_uses_remaining_health(self):
+        base = {
+            "outcome": "timeout",
+            "end_condition": "max time out",
+            "survival_time_s": 120.0,
+            "min_altitude_m": 1000.0,
+            "min_distance_m": 100.0,
+            "initial_distance_m": 950.0,
+            "wez_1s_achieved": False,
+            "started_in_wez": False,
+            "entered_wez_from_outside": False,
+            "max_consecutive_wez_s": 0.0,
+            "cumulative_target_damage": 0.0,
+            "trajectory_sha256": "a",
+            "initial_heading_deg": 0.0,
+            "initial_n_m": 0.0,
+            "initial_e_m": 0.0,
+            "initial_d_m": -7000.0,
+        }
+        summary = summarize([
+            {**base, "ownship_health": 1.0, "target_health": 0.8},
+            {**base, "ownship_health": 0.7, "target_health": 1.0},
+            {**base, "ownship_health": 1.0, "target_health": 1.0},
+        ])
+        self.assertEqual(summary["rulebook_wins"], 1)
+        self.assertEqual(summary["rulebook_losses"], 1)
+        self.assertEqual(summary["rulebook_draws"], 1)
+        self.assertEqual(summary["rulebook_points"], 1.5)
+        self.assertEqual(summary["rulebook_points_per_episode"], 0.5)
 
 
 class WezMilestoneRewardTests(unittest.TestCase):

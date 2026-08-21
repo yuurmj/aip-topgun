@@ -1,3 +1,11 @@
-from .single_agent_env import DogFightEnv
-
 __all__ = ["DogFightEnv"]
+
+
+def __getattr__(name):
+    """Avoid importing Gym when only observation helpers are needed."""
+
+    if name == "DogFightEnv":
+        from .single_agent_env import DogFightEnv
+
+        return DogFightEnv
+    raise AttributeError(name)

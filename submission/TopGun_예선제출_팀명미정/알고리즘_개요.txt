@@ -1,0 +1,19 @@
+알고리즘: Soft Actor-Critic(SAC) 기반 연속 제어 정책
+네트워크: MLP actor, 은닉층 256 x 256, ReLU
+관측: tactical25 (자기 기체/상대 기체 상태 및 상대 기하 정보)
+행동: roll, pitch, rudder, throttle 4축 연속 명령
+추론: lightweight bundle의 actor 가중치를 CPU Torch로 직접 실행
+
+제어 주기:
+- 서버 PlaneInfo pair마다 guidance와 최종 CMD를 갱신(action_repeat=1)
+- MLP 입력 관측은 학습 step_ratio와 같은 6프레임 동안 유지(observation_repeat=6)
+
+Unreal의 XYZ(Z-up) 위치와 world-frame velocity를 학습 환경의 NED 위치와 body-axis u/v/w로 변환합니다. 자세 변화에서 yaw rate를 복원하고 KCAS와 ALT를 채웁니다. 공개 PlaneInfo에 없는 HP는 1.0으로 둡니다.
+
+최종 정책은 SAC actor와 저장된 pursuit-guidance residual을 결합합니다. 좌우 대칭 정규화, 표적 고도 보호, 근거리 속도 조절을 적용하며 스로틀은 모든 정책 합성이 끝난 뒤 정확히 한 번 [-1,1]에서 [0,1]로 변환합니다.
+
+정책 파일:
+- model/policy_weights.pkl.gz
+- model/metadata.json
+
+훈련 재개용 checkpoint가 아닌 제출/추론용 lightweight bundle입니다.

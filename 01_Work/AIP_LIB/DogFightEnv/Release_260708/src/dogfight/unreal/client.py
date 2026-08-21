@@ -4,6 +4,7 @@ import copy
 from dataclasses import asdict, dataclass, field, is_dataclass
 import math
 import socket
+import struct
 import sys
 import threading
 import time
@@ -73,7 +74,7 @@ class UnrealAIPilotUDPClient:
     def __init__(
         self,
         command_policy: CommandPolicy,
-        server_ip: str = "221.151.77.208",
+        server_ip: str = "127.0.0.1",
         server_port: int = 9999,
         team_name: str = "ASDF",
         ai_type: AIType = AIType.ReinforcementLearning,
@@ -107,11 +108,15 @@ class UnrealAIPilotUDPClient:
         self.context = RemoteClientContext()
         self._own_info_received = False
         self._enemy_info_received = False
+        self._last_command_frame_index = -1
         self._start_time = time.time()
         self._last_received_packet = PacketTrace()
         self._last_sent_packet = PacketTrace()
         self._last_plane_info_by_id: dict[int, PacketTrace] = {}
-        self._rx_counts = {message_type.name: 0 for message_type in MessageType}
+        self._rx_counts = {
+            "INVALID": 0,
+            **{message_type.name: 0 for message_type in MessageType},
+        }
         self._tx_counts = {message_type.name: 0 for message_type in MessageType}
 
     def connect(self) -> None:
@@ -295,31 +300,61 @@ class UnrealAIPilotUDPClient:
 
     def _process_packet(self, buffer: bytes, remote_endpoint: str = "") -> None:
         if len(buffer) < 4:
+            self._record_invalid_packet(buffer, remote_endpoint)
             return
 
-        message_type = unpack_message_type(buffer)
-        if message_type == MessageType.MT_SetPlaneID:
-            packet = unpack_set_plane_id(buffer)
-            self._record_packet("RX", message_type, packet, len(buffer), remote_endpoint)
-            self._handle_set_plane_id(packet)
-        elif message_type == MessageType.MT_Init:
-            packet = unpack_init(buffer)
-            self._record_packet("RX", message_type, packet, len(buffer), remote_endpoint)
-            self._handle_init(packet)
-        elif message_type == MessageType.MT_GameControl:
-            packet = unpack_game_control(buffer)
-            self._record_packet("RX", message_type, packet, len(buffer), remote_endpoint)
-            self._handle_game_control(packet)
-        elif message_type == MessageType.MT_PlaneInfo:
-            packet = unpack_plane_info(buffer)
-            self._record_packet("RX", message_type, packet, len(buffer), remote_endpoint)
-            self._handle_plane_info(packet)
+        try:
+            message_type = unpack_message_type(buffer)
+            if message_type == MessageType.MT_SetPlaneID:
+                packet = unpack_set_plane_id(buffer)
+                self._record_packet("RX", message_type, packet, len(buffer), remote_endpoint)
+                self._handle_set_plane_id(packet)
+            elif message_type == MessageType.MT_Init:
+                packet = unpack_init(buffer)
+                self._record_packet("RX", message_type, packet, len(buffer), remote_endpoint)
+                self._handle_init(packet)
+            elif message_type == MessageType.MT_GameControl:
+                packet = unpack_game_control(buffer)
+                self._record_packet("RX", message_type, packet, len(buffer), remote_endpoint)
+                self._handle_game_control(packet)
+            elif message_type == MessageType.MT_PlaneInfo:
+                packet = unpack_plane_info(buffer)
+                self._record_packet("RX", message_type, packet, len(buffer), remote_endpoint)
+                self._handle_plane_info(packet)
+            else:
+                # The distributed protocol exposes message IDs such as Damage,
+                # VP and StageInfo without publishing their payload structs.
+                # Keep them visible in the packet monitor without guessing a
+                # binary layout or changing policy state.
+                self._record_packet(
+                    "RX",
+                    message_type,
+                    {"unparsed_payload_bytes": len(buffer) - 4},
+                    len(buffer),
+                    remote_endpoint,
+                )
+        except (ValueError, struct.error):
+            self._record_invalid_packet(buffer, remote_endpoint)
+
+    def _record_invalid_packet(self, buffer: bytes, remote_endpoint: str) -> None:
+        trace = PacketTrace(
+            direction="RX",
+            message_type="INVALID",
+            timestamp=time.time(),
+            size_bytes=len(buffer),
+            endpoint=remote_endpoint,
+            fields={"prefix_hex": buffer[:16].hex()},
+        )
+        with self._lock:
+            self._last_received_packet = trace
+            self._rx_counts["INVALID"] += 1
 
     def _handle_set_plane_id(self, packet: SetPlaneID) -> None:
         with self._lock:
             self.context.plane_id = packet.plane_id
             self._own_info_received = False
             self._enemy_info_received = False
+            self._last_command_frame_index = -1
             self.command_policy.reset(self.context)
 
     def _handle_init(self, packet: Init) -> None:
@@ -329,6 +364,7 @@ class UnrealAIPilotUDPClient:
             self.context.enemy_plane = PlaneSnapshot()
             self._own_info_received = False
             self._enemy_info_received = False
+            self._last_command_frame_index = -1
             self.command_policy.reset(self.context)
 
     def _handle_game_control(self, packet: GameControl) -> None:
@@ -348,12 +384,21 @@ class UnrealAIPilotUDPClient:
                 self.context.enemy_plane.update(packet)
                 self._enemy_info_received = True
 
-            self.context.frame_index = packet.index
-            should_send = self._own_info_received and self._enemy_info_received
+            own_frame = self.context.own_plane.frame_index
+            enemy_frame = self.context.enemy_plane.frame_index
+            matching_frame = own_frame == enemy_frame
+            is_new_frame = own_frame > self._last_command_frame_index
+            should_send = (
+                self._own_info_received
+                and self._enemy_info_received
+                and matching_frame
+                and is_new_frame
+            )
 
             if not should_send:
                 return
 
+            self.context.frame_index = own_frame
             context_copy = RemoteClientContext(
                 plane_id=self.context.plane_id,
                 frame_index=self.context.frame_index,
@@ -364,6 +409,7 @@ class UnrealAIPilotUDPClient:
             )
             self._own_info_received = False
             self._enemy_info_received = False
+            self._last_command_frame_index = own_frame
 
         if self.command_delay_sec > 0:
             time.sleep(self.command_delay_sec)
