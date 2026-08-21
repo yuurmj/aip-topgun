@@ -1,0 +1,127 @@
+# PPO + LSTM v29: global soft-roll cap + cone-focused precision refinement.
+# Restart from v26 checkpoint_000006; do not continue from v27/v28.
+
+name: team01_ppo_lstm_v30_hold_cp06
+script: train_rllib
+
+output:
+  name: team01
+  tag: ppo_lstm_v30_hold_cp06
+
+env:
+  observation_mode: tactical16
+  reward_module: student.my_reward_v30_lstm
+  target_mode: autopilot
+  target_behavior_dll: AIP_BASE_target.dll
+  max_engage_time: 8.0
+  episode_step_limit: 480
+
+env_config:
+  step_ratio: 6
+  min_altitude: 6550.0
+  geometry_guard:
+    enabled: false
+
+  # Keep the exact successful v26 scenario distribution so this experiment
+  # isolates the reward change instead of mixing in another distribution shift.
+  initial_scenario:
+    mode: scenario_pool
+    scenarios:
+      - name: v30_cp06_900m_auto_center
+        weight: 0.20
+        ownship: [6900.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      - name: v30_cp06_900m_auto_left
+        weight: 0.30
+        ownship: [6899.7777503, -20.0, -7000.0, 0.0, 0.0, 179.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+      - name: v30_cp06_900m_auto_right
+        weight: 0.50
+        ownship: [6899.7777503, 20.0, -7000.0, 0.0, 0.0, 180.5, 264.0]
+        target:  [6000.0, 0.0, -7000.0, 0.0, 0.0, 180.0, 250.0]
+        target_mode: autopilot
+        target_autopilot:
+          heading_cmd: 180.0
+          altitude_cmd: -7000.0
+          speed_cmd: 250.0
+
+    ownship_randomization:
+      enabled: false
+    target_randomization:
+      enabled: false
+    shared_randomization:
+      enabled: false
+
+algo:
+  name: ppo
+  framework: torch
+
+  # v27/v28 moved too far even at 1e-5~2e-5.  v29 is deliberately smaller.
+  lr: 5.0e-6
+  gamma: 0.99
+  train_batch_size: 1024
+  minibatch_size: 128
+  gae_lambda: 0.95
+  clip_param: 0.03
+
+  lstm:
+    enabled: true
+    cell_size: 64
+    max_seq_len: 8
+    debug_io: false
+
+  mlp:
+    enabled: true
+    fcnet_hiddens: [128, 128]
+    fcnet_activation: relu
+    head_fcnet_hiddens: []
+    head_fcnet_activation: relu
+    vf_share_layers: true
+
+runtime:
+  iterations: 3
+  num_env_runners: 1
+  num_envs_per_env_runner: 1
+  rollout_fragment_length: 8
+  batch_mode: truncate_episodes
+  save_lightweight_bundle: true
+  lightweight_bundle_frequency: 1
+  save_native_checkpoint: true
+  native_checkpoint_frequency: 1
+  restore_checkpoint: "C:/Users/Ran/Desktop/2026/aip-topgun/01_Work/AIP_LIB/DogFightEnv/Release_260708/artifacts/checkpoints/team01/ppo_lstm_v26_attack_bootstrap/checkpoint_000006"
+
+policy_probe:
+  enabled: true
+  interval: 1
+  steps: 8
+  print: true
+
+engagement_log:
+  enabled: true
+  interval: 1
+  steps: 480
+  episodes: 24
+  print: true
+
+notes: >-
+  v30-cp06 keeps the exact v26/v29 900 m center/left/right distribution
+  (20/30/50) and the v29 soft-roll/pitch logic.  The only intended reward
+  changes are stronger real-cone hold/exit shaping and more tolerant altitude
+  protection, so the experiment tests whether an already-good firing solution
+  can be preserved longer without sacrificing damage.  This branch starts from
+  v26 checkpoint_000006.  PPO architecture and optimization stay unchanged
+  (lr=5e-6, clip=0.03, 3 iterations).  Compare WEZ occupancy, max consecutive
+  WEZ, target damage, crash rate, final ATA, and action saturation; do not select
+  by reward_mean alone.

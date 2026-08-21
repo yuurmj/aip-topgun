@@ -1292,7 +1292,7 @@ def main():
         "ep_reward_closure", "ep_reward_alignment", "ep_reward_range",
         "ep_reward_fine_alignment", "ep_reward_wez_hold",
         "ep_altitude_penalty_steps",
-        "initial_scenario_index"
+        "initial_scenario_index",
         "initial_alpha_deg", "initial_ata_deg", "initial_aa_deg",
         "initial_distance_m", "final_ata_deg", "final_aa_deg",
         "headon_guard_fail",
