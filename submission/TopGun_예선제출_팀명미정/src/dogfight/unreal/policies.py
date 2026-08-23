@@ -346,10 +346,11 @@ class PlaneInfoStateTracker:
     def convert_pair(self, own_plane, target_plane) -> tuple[np.ndarray, np.ndarray]:
         """Convert a synchronized pair, optionally aligning per-plane origins.
 
-        BattleServer trajectories share XYZ axes, but the two JSBSim instances
-        can start from different absolute map origins. Rebase mode keeps each
-        measured displacement while placing the target at the configured
-        initial range along the ownship's initial heading.
+        BattleServer PlaneInfo trajectories use consistent XYZ axes, but the
+        two JSBSim instances can start from different absolute map origins.
+        Rebase mode retains each aircraft's measured displacement while placing
+        the target at a configured head-on range in the ownship's initial
+        heading.  The normal submission path remains unchanged unless enabled.
         """
         if not self.rebase_pair_positions:
             return self.convert(own_plane), self.convert(target_plane)

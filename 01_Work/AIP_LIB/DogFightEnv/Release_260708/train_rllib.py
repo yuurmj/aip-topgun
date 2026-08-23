@@ -602,6 +602,15 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--training-intensity",
+        type=float,
+        default=None,
+        help=(
+            "SAC learner updates relative to environment sampling. "
+            "Ignored by PPO; RLlib's natural ratio is used when omitted."
+        ),
+    )
+    parser.add_argument(
         "--model-fcnet-hiddens",
         default=None,
         help="Comma-separated RLlib model hidden sizes, e.g. 512,256,128.",
@@ -852,6 +861,7 @@ def _build_algorithm_args(args) -> dict:
         "target_entropy": args.target_entropy,
         "replay_buffer_capacity": args.replay_buffer_capacity,
         "learning_starts": args.learning_starts,
+        "training_intensity": args.training_intensity,
         "model_config": _build_model_config_args(args),
         "network_spec": args.network_spec_json,
         "use_lstm": args.use_lstm,
@@ -1292,7 +1302,7 @@ def main():
         "ep_reward_closure", "ep_reward_alignment", "ep_reward_range",
         "ep_reward_fine_alignment", "ep_reward_wez_hold",
         "ep_altitude_penalty_steps",
-        "initial_scenario_index"
+        "initial_scenario_index",
         "initial_alpha_deg", "initial_ata_deg", "initial_aa_deg",
         "initial_distance_m", "final_ata_deg", "final_aa_deg",
         "headon_guard_fail",
