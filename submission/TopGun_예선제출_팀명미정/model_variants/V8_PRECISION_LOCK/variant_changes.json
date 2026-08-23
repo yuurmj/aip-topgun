@@ -1,0 +1,22 @@
+{
+  "variant": "V8_PRECISION_LOCK",
+  "based_on": "V4_CUTOFF_ATTACK",
+  "purpose": "Keep V4 behavior but require tighter alignment before committing to WEZ hold.",
+  "source_weights_sha256": "fc01cb96bb2a92b667b1a20be0c62317667cd83c88e2030611b569a1e07d5ca9",
+  "before": {
+    "wez_hold_latch_ata_deg": 4.0
+  },
+  "after": {
+    "wez_hold_latch_ata_deg": 2.5
+  },
+  "preserved": {
+    "capture_heading_error_deg": 40.0,
+    "capture_lead_time_s": 0.5,
+    "brake_range_m": 0.0,
+    "wez_observation_config": {
+      "angle_deg": 10.0,
+      "min_range_m": 152.4,
+      "max_range_m": 914.4
+    }
+  }
+}
