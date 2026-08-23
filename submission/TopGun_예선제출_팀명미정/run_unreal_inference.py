@@ -66,6 +66,23 @@ def parse_args():
     )
     parser.add_argument("--packet-monitor", action="store_true", help="Render live RX/TX packet values in the terminal.")
     parser.add_argument(
+        "--rebase-pair-positions",
+        action="store_true",
+        help="Rebase each plane's PlaneInfo position onto a shared local origin instead of trusting raw absolute XYZ.",
+    )
+    parser.add_argument(
+        "--initial-pair-range-m",
+        type=float,
+        default=762.0,
+        help="Initial ownship-to-target range (m) used to place the target's local origin when --rebase-pair-positions is set.",
+    )
+    parser.add_argument(
+        "--plane-info-velocity-frame",
+        choices=["world", "body"],
+        default="world",
+        help="Frame the PlaneInfo velocity vector is reported in. BattleServer builds may report body-axis velocity.",
+    )
+    parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Load and validate the selected policy, print its resolved contract, then exit without opening UDP.",
@@ -242,6 +259,9 @@ def main():
             observation_repeat=observation_repeat,
             debug_action_repeat=args.debug_action_repeat,
             wez_config=runtime.env_config.get("wez") if runtime else None,
+            rebase_pair_positions=args.rebase_pair_positions,
+            initial_pair_range_m=args.initial_pair_range_m,
+            plane_info_velocity_frame=args.plane_info_velocity_frame,
         )
         client = UnrealAIPilotUDPClient(
             command_policy=command_policy,
