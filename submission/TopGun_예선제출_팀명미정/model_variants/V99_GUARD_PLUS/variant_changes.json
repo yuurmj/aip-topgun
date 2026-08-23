@@ -1,0 +1,25 @@
+{
+  "variant": "V99_GUARD_PLUS",
+  "based_on": "model_variants/V98_MINE_ATTACK_DEFENDED",
+  "purpose": "Preserve V98 attack while slightly strengthening rear defense.",
+  "configuration_changes": {
+    "rear_threat_distance_m": {
+      "from": 1000.0,
+      "to": 1100.0
+    },
+    "rear_threat_roll_gain": {
+      "from": 0.015,
+      "to": 0.017
+    },
+    "rear_threat_rudder_gain": {
+      "from": 0.08,
+      "to": 0.09
+    }
+  },
+  "unchanged_evaluation_options": {
+    "rebase_pair_positions": true,
+    "initial_pair_range_m": 762.0,
+    "plane_info_velocity_frame": "body"
+  },
+  "source_weights_sha256": "fc01cb96bb2a92b667b1a20be0c62317667cd83c88e2030611b569a1e07d5ca9"
+}
