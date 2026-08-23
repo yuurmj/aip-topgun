@@ -8,6 +8,7 @@ import struct
 import sys
 import threading
 import time
+import traceback
 from typing import Any, Protocol
 
 from dogfight.unreal.protocol import (
@@ -118,6 +119,7 @@ class UnrealAIPilotUDPClient:
             **{message_type.name: 0 for message_type in MessageType},
         }
         self._tx_counts = {message_type.name: 0 for message_type in MessageType}
+        self._process_packet_error_count = 0
 
     def connect(self) -> None:
         if self._socket is not None:
@@ -177,6 +179,7 @@ class UnrealAIPilotUDPClient:
             plane_info_by_id = copy.deepcopy(self._last_plane_info_by_id)
             rx_counts = dict(self._rx_counts)
             tx_counts = dict(self._tx_counts)
+            error_count = self._process_packet_error_count
 
         lines = [
             "=== Unreal UDP Packet Monitor ===",
@@ -192,6 +195,7 @@ class UnrealAIPilotUDPClient:
             "[Counters]",
             "RX: " + self._format_counts(rx_counts),
             "TX: " + self._format_counts(tx_counts),
+            f"packet_handling_errors={error_count}",
             "",
             "[PlaneInfo Latest]",
         ]
@@ -248,7 +252,15 @@ class UnrealAIPilotUDPClient:
                 continue
             except OSError:
                 break
-            self._process_packet(buffer, remote_endpoint)
+            try:
+                self._process_packet(buffer, remote_endpoint)
+            except Exception:
+                # A single bad frame (e.g. a transient math edge case in the
+                # action provider) must not kill the whole match: the server
+                # side waits on our CMD to advance simulation, so an
+                # unhandled exception here silently freezes both aircraft
+                # for the rest of the round with no way to recover.
+                self._handle_process_packet_error()
 
     def send_simulation_state(self) -> None:
         assert self._socket is not None
@@ -335,6 +347,18 @@ class UnrealAIPilotUDPClient:
                 )
         except (ValueError, struct.error):
             self._record_invalid_packet(buffer, remote_endpoint)
+
+    def _handle_process_packet_error(self) -> None:
+        with self._lock:
+            self._process_packet_error_count += 1
+            error_count = self._process_packet_error_count
+        print(
+            f"[DogFightEnv][Unreal][ERROR] packet handling failed (count={error_count}); "
+            "dropping this frame and continuing.",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
 
     def _record_invalid_packet(self, buffer: bytes, remote_endpoint: str) -> None:
         trace = PacketTrace(

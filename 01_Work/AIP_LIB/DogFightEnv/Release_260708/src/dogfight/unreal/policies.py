@@ -300,7 +300,7 @@ class PlaneInfoStateTracker:
     used through most training observations.
     """
 
-    def __init__(self, frame_rate_hz: float = 60.0) -> None:
+    def __init__(self, frame_rate_hz: float = 30.0) -> None:
         self.frame_rate_hz = float(frame_rate_hz)
         self._previous_rotation: dict[int, tuple[int, np.ndarray]] = {}
 

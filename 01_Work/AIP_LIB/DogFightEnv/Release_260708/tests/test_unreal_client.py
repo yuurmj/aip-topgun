@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+import socket
 import struct
 import sys
 import tempfile
@@ -95,6 +96,41 @@ class UnrealClientFramePairingTests(unittest.TestCase):
         self.client._handle_plane_info(_plane(21, 1))
         self.assertEqual(self.policy.frames, [(21, 21, 21)])
         self.assertEqual(self.commands[0].index, 21)
+
+
+class _FakeSocket:
+    def __init__(self, buffers: list[bytes]):
+        self._buffers = list(buffers)
+
+    def recv(self, bufsize: int) -> bytes:
+        if not self._buffers:
+            raise socket.timeout()
+        return self._buffers.pop(0)
+
+
+class UnrealClientPacketErrorRecoveryTests(unittest.TestCase):
+    def test_receive_loop_survives_command_policy_exception_and_keeps_processing(self):
+        # A single bad frame must not end the match: the server side waits
+        # on our CMD to advance simulation, so letting an exception from
+        # command handling escape the receive loop freezes both aircraft
+        # for the rest of the round with no way to recover.
+        client = UnrealAIPilotUDPClient(command_policy=_RecordingPolicy())
+        call_count = {"n": 0}
+
+        def _raise_once_then_stop(buffer, remote_endpoint):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise ValueError("boom")
+            client._running = False
+
+        client._process_packet = _raise_once_then_stop
+        client._socket = _FakeSocket([b"frame1", b"frame2"])
+        client._running = True
+
+        client._receive_loop()
+
+        self.assertEqual(call_count["n"], 2)
+        self.assertEqual(client._process_packet_error_count, 1)
 
 
 class UnrealProtocolTeamNameTests(unittest.TestCase):
