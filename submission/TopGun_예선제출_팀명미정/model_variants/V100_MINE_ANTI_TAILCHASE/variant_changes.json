@@ -1,0 +1,34 @@
+{
+  "variant": "V4_CUTOFF_ATTACK",
+  "purpose": "break the neutral safe-circle deadlock V3 converged to by tightening the capture/lock gates so the guidance stops mirroring the opponent's bank before it is actually aimed",
+  "based_on": "model_variants/V3_DIRECT_CHASE (post velocity_frame=body fix, reproduced 100:100 / 99.68:100 across 4 trials, opponent never took damage)",
+  "before": {
+    "capture_heading_error_deg": 180.0,
+    "capture_lead_time_s": 1.0,
+    "wez_hold_latch_ata_deg": 15.0,
+    "wez_hold_target_heading_blend": 0.25,
+    "wez_hold_target_pitch_blend": 0.0
+  },
+  "after": {
+    "capture_heading_error_deg": 40.0,
+    "capture_lead_time_s": 0.5,
+    "wez_hold_latch_ata_deg": 4.0,
+    "wez_hold_target_heading_blend": 0.7,
+    "wez_hold_target_pitch_blend": 1.0
+  },
+  "rationale": "At capture_heading_error_deg=180, capture mode activated regardless of aim, and capture_target_bank_blend=1.0 immediately made the guidance copy the opponent's own bank angle instead of computing a real pursuit solution -- producing an endless neutral mirrored circle with the opponent (matches ~750-1200m separation observed across all V3 trials). Narrowing the gate to 40 deg means capture mode only engages once we are already roughly nose-on, so outside that cone the aircraft runs the real intercept-pursuit guidance instead of mirroring. Tightening wez_hold_latch_ata_deg 15->4 makes the hold-lock commit only once genuinely aligned, rather than latching (and then coasting) from a loose angle.",
+  "runtime_contract": {
+    "rebase_pair_positions": true,
+    "initial_pair_range_m": 762.0,
+    "plane_info_velocity_frame": "body"
+  },
+  "results": [
+    {
+      "trial": 1,
+      "date": "2026-08-23",
+      "opponent": "real EasyModeCutoff cutoff model (unreal_bt_client.exe)",
+      "final_hp": {"blue_opponent": 40.848, "red_ours": 36.281},
+      "notes": "First trial all night where the opponent took ANY damage (previously 0/14+ trials across original checkpoint + V1/V2/V3). Round appears to have been cut short mid-fight (both AI clients disconnected around t~30s of 200s) while damage was still being actively exchanged, so this is not a completed round -- reproducibility not yet confirmed."
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "variant": "V101_MINE_OVERSHOOT_GUARD",
+  "based_on": "V99_MINE_TUNED",
+  "purpose": "Keep V99's improved first-merge damage output, add overshoot-prevention speed matching near the target.",
+  "before": {
+    "proximity_speed_match_gain": 0.0
+  },
+  "after": {
+    "proximity_speed_match_gain": 0.025
+  },
+  "preserved_from_V99": {
+    "capture_bank_scale": 0.65,
+    "bank_pitch_compensation_gain": 0.25,
+    "near_throttle_action": -0.2,
+    "rear_threat_ata_deg": 150.0,
+    "rear_threat_turn_latch": false
+  },
+  "results": [
+    {
+      "trial": 1,
+      "date": "2026-08-23",
+      "opponent": "real EasyModeCutoff cutoff model",
+      "note": "IMPORTANT: user observed we were AHEAD in HP around/near t=200s of this round. The local DogFightViewer test harness does not auto-stop at the 200s rulebook limit, so the round kept running and the opponent eventually caught up and won after t=200. If the real competition enforces the 200s cutoff strictly, this variant may have actually satisfied the win condition (higher HP at time limit) even though our local test showed an eventual loss.",
+      "final_hp_at_snapshot_t194": {"blue_opponent": 76.787, "red_ours": 74.626},
+      "eventual_result": "loss after t=200 when opponent caught us from behind during re-approach"
+    }
+  ]
+}
