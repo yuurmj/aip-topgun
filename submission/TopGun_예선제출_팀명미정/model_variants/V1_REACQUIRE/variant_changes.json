@@ -1,0 +1,28 @@
+{
+  "variant": "V1_REACQUIRE",
+  "purpose": "post-merge reacquisition without rear-threat override",
+  "source_bundle": "/Users/jeong-yurim/Documents/PKNU/3/AI Pilot Top Gun Challenge/aip-topgun/submission/TopGun_예선제출_팀명미정/model",
+  "before": {
+    "lead_time_s": 8.0,
+    "capture_heading_error_deg": 100.0,
+    "capture_target_bank_blend": 0.55,
+    "capture_roll_gain": 0.012,
+    "latch_capture_mode": true,
+    "rear_threat_distance_m": 1500.0,
+    "rear_threat_roll_gain": 0.025
+  },
+  "after": {
+    "lead_time_s": 2.0,
+    "capture_heading_error_deg": 180.0,
+    "capture_target_bank_blend": 1.0,
+    "capture_roll_gain": 0.015,
+    "latch_capture_mode": true,
+    "rear_threat_distance_m": 0.0,
+    "rear_threat_roll_gain": 0.0
+  },
+  "runtime_contract": {
+    "rebase_pair_positions": true,
+    "initial_pair_range_m": 762.0,
+    "plane_info_velocity_frame": "body"
+  }
+}
