@@ -124,6 +124,9 @@ class ProviderCommandPolicy:
         observation_repeat: int = 1,
         debug_action_repeat: bool = False,
         wez_config: dict | None = None,
+        rebase_pair_positions: bool = False,
+        initial_pair_range_m: float = 762.0,
+        plane_info_velocity_frame: str = "world",
     ):
         self.action_provider = action_provider
         self.observation_mode = observation_mode
@@ -135,7 +138,11 @@ class ProviderCommandPolicy:
         self.debug_action_repeat = debug_action_repeat
         self.wez_config = dict(wez_config) if wez_config else None
         self.geometry = GeometryInfo()
-        self.state_tracker = PlaneInfoStateTracker()
+        self.state_tracker = PlaneInfoStateTracker(
+            rebase_pair_positions=rebase_pair_positions,
+            initial_pair_range_m=initial_pair_range_m,
+            velocity_frame=plane_info_velocity_frame,
+        )
         self._state_pair_count = 0
         self._cached_action: np.ndarray | None = None
         self._cached_observation: np.ndarray | None = None
@@ -201,8 +208,9 @@ class ProviderCommandPolicy:
     def _compute_provider_action(
         self, context, own_plane, enemy_plane, pair_count: int
     ) -> np.ndarray:
-        ownship_state = self.state_tracker.convert(own_plane)
-        target_state = self.state_tracker.convert(enemy_plane)
+        ownship_state, target_state = self.state_tracker.convert_pair(
+            own_plane, enemy_plane
+        )
         if (
             self._cached_observation is None
             or pair_count % self.observation_repeat == 0
@@ -294,18 +302,91 @@ class ProviderCommandPolicy:
 class PlaneInfoStateTracker:
     """Restore the training-state fields available in Unreal PlaneInfo.
 
-    Unreal reports Cartesian XYZ with Z up and a world-frame velocity.  The
-    local trainer uses NED (Down positive) and body-axis u/v/w.  Health is not
-    present in the public PlaneInfo packet, so it defaults to the intact value
-    used through most training observations.
+    Unreal reports Cartesian XYZ with Z up. BattleServer builds currently
+    report velocity in body axes, while older integrations treated it as a
+    world-frame vector. The local trainer uses NED (Down positive) and
+    body-axis u/v/w. Health is not present in the public PlaneInfo packet, so
+    it defaults to the intact value used through most training observations.
     """
 
-    def __init__(self, frame_rate_hz: float = 60.0) -> None:
+    def __init__(
+        self,
+        frame_rate_hz: float = 60.0,
+        *,
+        rebase_pair_positions: bool = False,
+        initial_pair_range_m: float = 762.0,
+        velocity_frame: str = "world",
+    ) -> None:
         self.frame_rate_hz = float(frame_rate_hz)
+        self.rebase_pair_positions = bool(rebase_pair_positions)
+        self.initial_pair_range_m = max(0.0, float(initial_pair_range_m))
+        if velocity_frame not in {"world", "body"}:
+            raise ValueError("velocity_frame must be 'world' or 'body'")
+        self.velocity_frame = velocity_frame
         self._previous_rotation: dict[int, tuple[int, np.ndarray]] = {}
+        self._raw_position_origins: dict[int, np.ndarray] = {}
+        self._local_position_origins: dict[int, np.ndarray] = {}
 
     def reset(self) -> None:
         self._previous_rotation.clear()
+        self._raw_position_origins.clear()
+        self._local_position_origins.clear()
+
+    @staticmethod
+    def _raw_position(plane_info) -> np.ndarray:
+        return np.asarray(
+            [
+                plane_info.position.x,
+                plane_info.position.y,
+                plane_info.position.z,
+            ],
+            dtype=np.float64,
+        )
+
+    def convert_pair(self, own_plane, target_plane) -> tuple[np.ndarray, np.ndarray]:
+        """Convert a synchronized pair, optionally aligning per-plane origins.
+
+        BattleServer trajectories share XYZ axes, but the two JSBSim instances
+        can start from different absolute map origins. Rebase mode keeps each
+        measured displacement while placing the target at the configured
+        initial range along the ownship's initial heading.
+        """
+        if not self.rebase_pair_positions:
+            return self.convert(own_plane), self.convert(target_plane)
+
+        own_id = int(own_plane.plane_id)
+        target_id = int(target_plane.plane_id)
+        if own_id not in self._raw_position_origins:
+            own_raw = self._raw_position(own_plane)
+            target_raw = self._raw_position(target_plane)
+            yaw_rad = math.radians(float(own_plane.rotation.yaw))
+            forward = np.asarray(
+                [math.cos(yaw_rad), math.sin(yaw_rad), 0.0], dtype=np.float64
+            )
+            self._raw_position_origins[own_id] = own_raw
+            self._raw_position_origins[target_id] = target_raw
+            self._local_position_origins[own_id] = np.asarray(
+                [0.0, 0.0, own_raw[2]], dtype=np.float64
+            )
+            self._local_position_origins[target_id] = np.asarray(
+                [
+                    self.initial_pair_range_m * forward[0],
+                    self.initial_pair_range_m * forward[1],
+                    target_raw[2],
+                ],
+                dtype=np.float64,
+            )
+
+        own_position = self._local_position_origins[own_id] + (
+            self._raw_position(own_plane) - self._raw_position_origins[own_id]
+        )
+        target_position = self._local_position_origins[target_id] + (
+            self._raw_position(target_plane) - self._raw_position_origins[target_id]
+        )
+        return (
+            self.convert(own_plane, position_override=own_position),
+            self.convert(target_plane, position_override=target_position),
+        )
 
     @staticmethod
     def _wrap_degrees(value: float) -> float:
@@ -355,33 +436,43 @@ class PlaneInfoStateTracker:
         r = -theta_dot * math.sin(phi) + psi_dot * math.cos(phi) * math.cos(theta)
         return float(p), float(q), float(r)
 
-    def convert(self, plane_info) -> np.ndarray:
+    def convert(self, plane_info, position_override=None) -> np.ndarray:
         state = np.zeros(51, dtype=np.float32)
-        state[StateIndex.N] = plane_info.position.x
-        state[StateIndex.E] = plane_info.position.y
-        state[StateIndex.D] = -plane_info.position.z
+        position = (
+            self._raw_position(plane_info)
+            if position_override is None
+            else np.asarray(position_override, dtype=np.float64)
+        )
+        state[StateIndex.N] = position[0]
+        state[StateIndex.E] = position[1]
+        state[StateIndex.D] = -position[2]
         state[StateIndex.ROLL] = plane_info.rotation.roll
         state[StateIndex.PITCH] = plane_info.rotation.pitch
         state[StateIndex.YAW] = plane_info.rotation.yaw % 360.0
 
-        world_velocity_ned = np.asarray(
+        reported_velocity = np.asarray(
             [
                 plane_info.velocity.x,
                 plane_info.velocity.y,
-                -plane_info.velocity.z,
+                plane_info.velocity.z,
             ],
             dtype=np.float64,
         )
-        body_velocity = self._ned_to_body_rotation(
-            plane_info.rotation.roll,
-            plane_info.rotation.pitch,
-            plane_info.rotation.yaw,
-        ) @ world_velocity_ned
+        if self.velocity_frame == "body":
+            body_velocity = reported_velocity
+        else:
+            world_velocity_ned = reported_velocity.copy()
+            world_velocity_ned[2] *= -1.0
+            body_velocity = self._ned_to_body_rotation(
+                plane_info.rotation.roll,
+                plane_info.rotation.pitch,
+                plane_info.rotation.yaw,
+            ) @ world_velocity_ned
         state[StateIndex.U : StateIndex.W + 1] = body_velocity
         state[StateIndex.P : StateIndex.R + 1] = self._angular_rates(plane_info)
-        state[StateIndex.KCAS] = float(np.linalg.norm(world_velocity_ned))
+        state[StateIndex.KCAS] = float(np.linalg.norm(reported_velocity))
         state[StateIndex.SIM_TIME] = float(plane_info.index) / self.frame_rate_hz
-        state[StateIndex.ALT] = max(0.0, float(plane_info.position.z))
+        state[StateIndex.ALT] = max(0.0, float(position[2]))
         state[StateIndex.HEALTH] = 1.0
         return state
 

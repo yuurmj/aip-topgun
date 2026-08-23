@@ -82,6 +82,10 @@ def build_algorithm_config(algorithm_name: str, env_name: str, env_config: dict,
             training_args["num_steps_sampled_before_learning_starts"] = int(
                 args["learning_starts"]
             )
+        if args.get("training_intensity") is not None:
+            training_args["training_intensity"] = float(
+                args["training_intensity"]
+            )
         config = config.training(**training_args)
         if args.get("use_lstm_sac"):
             config = _apply_lstm_sac_model_config(config, args)

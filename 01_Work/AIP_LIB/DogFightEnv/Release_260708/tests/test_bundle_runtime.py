@@ -102,6 +102,59 @@ class BundleRuntimeTests(unittest.TestCase):
         reset = tracker.convert(packet)
         self.assertAlmostEqual(float(reset[StateIndex.R]), 0.0)
 
+    def test_battleserver_body_velocity_is_not_rotated_twice(self) -> None:
+        tracker = PlaneInfoStateTracker(velocity_frame="body")
+        packet = PlaneInfo(
+            index=1,
+            plane_id=0,
+            position=Vector3D(0.0, 0.0, 8000.0),
+            rotation=Rotation3D(0.0, 0.0, 180.0),
+            velocity=Vector3D(200.0, 0.0, 0.1),
+        )
+        state = tracker.convert(packet)
+        np.testing.assert_allclose(
+            state[StateIndex.U : StateIndex.W + 1],
+            [200.0, 0.0, 0.1],
+            atol=1.0e-6,
+        )
+
+    def test_battleserver_pair_rebase_preserves_displacement(self) -> None:
+        tracker = PlaneInfoStateTracker(
+            rebase_pair_positions=True,
+            initial_pair_range_m=762.0,
+            velocity_frame="body",
+        )
+        own = PlaneInfo(
+            1,
+            1,
+            Vector3D(-4133055.5, -6377001.5, 4571.997),
+            Rotation3D(0.0, 0.0, 0.0),
+            Vector3D(200.0, 0.0, 0.1),
+        )
+        target = PlaneInfo(
+            1,
+            0,
+            Vector3D(-4133068.75, -17024628.0, 4571.997),
+            Rotation3D(0.0, 0.0, 180.0),
+            Vector3D(200.0, 0.0, 0.1),
+        )
+        own_state, target_state = tracker.convert_pair(own, target)
+        self.assertAlmostEqual(
+            float(target_state[StateIndex.N] - own_state[StateIndex.N]),
+            762.0,
+        )
+        self.assertAlmostEqual(
+            float(target_state[StateIndex.E] - own_state[StateIndex.E]),
+            0.0,
+        )
+
+        own.index = target.index = 2
+        own.position.x += 10.0
+        target.position.x -= 12.0
+        moved_own, moved_target = tracker.convert_pair(own, target)
+        self.assertAlmostEqual(float(moved_own[StateIndex.N]), 10.0)
+        self.assertAlmostEqual(float(moved_target[StateIndex.N]), 750.0)
+
     def test_unreal_tactical25_matches_reconstructable_local_features(self) -> None:
         tracker = PlaneInfoStateTracker()
         own_packet = PlaneInfo(

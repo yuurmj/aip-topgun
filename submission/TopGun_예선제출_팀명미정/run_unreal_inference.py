@@ -66,11 +66,33 @@ def parse_args():
     )
     parser.add_argument("--packet-monitor", action="store_true", help="Render live RX/TX packet values in the terminal.")
     parser.add_argument(
+        "--packet-log",
+        default="",
+        help="Optional JSONL path that records every received and transmitted UDP packet.",
+    )
+    parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Load and validate the selected policy, print its resolved contract, then exit without opening UDP.",
     )
     parser.add_argument("--packet-monitor-interval-sec", type=float, default=0.2, help="Refresh interval for the live packet monitor.")
+    parser.add_argument(
+        "--rebase-pair-positions",
+        action="store_true",
+        help="Align the two BattleServer JSBSim map origins for diagnostic inference.",
+    )
+    parser.add_argument(
+        "--initial-pair-range-m",
+        type=float,
+        default=762.0,
+        help="Initial head-on range used with --rebase-pair-positions (default: 2500 ft).",
+    )
+    parser.add_argument(
+        "--plane-info-velocity-frame",
+        choices=["world", "body"],
+        default="world",
+        help="Interpretation of PlaneInfo velocity; normal legacy path uses world.",
+    )
     parser.add_argument(
         "--observation-mode",
         default=None,
@@ -242,6 +264,9 @@ def main():
             observation_repeat=observation_repeat,
             debug_action_repeat=args.debug_action_repeat,
             wez_config=runtime.env_config.get("wez") if runtime else None,
+            rebase_pair_positions=args.rebase_pair_positions,
+            initial_pair_range_m=args.initial_pair_range_m,
+            plane_info_velocity_frame=args.plane_info_velocity_frame,
         )
         client = UnrealAIPilotUDPClient(
             command_policy=command_policy,
@@ -255,6 +280,7 @@ def main():
             recv_timeout_sec=args.recv_timeout_sec,
             enable_terminal_monitor=args.packet_monitor,
             terminal_monitor_interval_sec=args.packet_monitor_interval_sec,
+            packet_log_path=args.packet_log or None,
         )
 
         try:

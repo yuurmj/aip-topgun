@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 from dataclasses import asdict, dataclass, field, is_dataclass
+import json
 import math
+from pathlib import Path
 import socket
 import struct
 import sys
@@ -84,6 +86,7 @@ class UnrealAIPilotUDPClient:
         recv_timeout_sec: float = 0.2,
         enable_terminal_monitor: bool = False,
         terminal_monitor_interval_sec: float = 0.2,
+        packet_log_path: str | None = None,
     ):
         self.command_policy = command_policy
         self.server_ip = server_ip
@@ -96,6 +99,7 @@ class UnrealAIPilotUDPClient:
         self.recv_timeout_sec = recv_timeout_sec
         self.enable_terminal_monitor = enable_terminal_monitor
         self.terminal_monitor_interval_sec = terminal_monitor_interval_sec
+        self.packet_log_path = str(packet_log_path) if packet_log_path else ""
 
         self._socket: socket.socket | None = None
         self._server_addr: tuple[str, int] | None = None
@@ -105,6 +109,8 @@ class UnrealAIPilotUDPClient:
         self._heartbeat_thread: threading.Thread | None = None
         self._terminal_monitor_thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._packet_log_lock = threading.Lock()
+        self._packet_log_file = None
         self.context = RemoteClientContext()
         self._own_info_received = False
         self._enemy_info_received = False
@@ -122,6 +128,7 @@ class UnrealAIPilotUDPClient:
     def connect(self) -> None:
         if self._socket is not None:
             return
+        self._open_packet_log()
         server_host = self._normalize_server_host(self.server_ip)
         self._server_addr = (server_host, self.server_port)
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -153,6 +160,38 @@ class UnrealAIPilotUDPClient:
         if self._socket is not None:
             self._socket.close()
             self._socket = None
+        self._close_packet_log()
+
+    def _open_packet_log(self) -> None:
+        if not self.packet_log_path or self._packet_log_file is not None:
+            return
+        path = Path(self.packet_log_path).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._packet_log_file = path.open("a", encoding="utf-8", buffering=1)
+
+    def _close_packet_log(self) -> None:
+        with self._packet_log_lock:
+            if self._packet_log_file is not None:
+                self._packet_log_file.flush()
+                self._packet_log_file.close()
+                self._packet_log_file = None
+
+    def _write_packet_trace(self, trace: PacketTrace) -> None:
+        if self._packet_log_file is None:
+            return
+        row = {
+            "direction": trace.direction,
+            "message_type": trace.message_type,
+            "timestamp": trace.timestamp,
+            "size_bytes": trace.size_bytes,
+            "endpoint": trace.endpoint,
+            "fields": trace.fields,
+        }
+        with self._packet_log_lock:
+            if self._packet_log_file is not None:
+                self._packet_log_file.write(
+                    json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+                )
 
     def enable_packet_monitor(self, refresh_interval_sec: float | None = None) -> None:
         with self._lock:
@@ -329,7 +368,10 @@ class UnrealAIPilotUDPClient:
                 self._record_packet(
                     "RX",
                     message_type,
-                    {"unparsed_payload_bytes": len(buffer) - 4},
+                    {
+                        "unparsed_payload_bytes": len(buffer) - 4,
+                        "payload_hex": buffer[4:].hex(),
+                    },
                     len(buffer),
                     remote_endpoint,
                 )
@@ -348,6 +390,7 @@ class UnrealAIPilotUDPClient:
         with self._lock:
             self._last_received_packet = trace
             self._rx_counts["INVALID"] += 1
+        self._write_packet_trace(trace)
 
     def _handle_set_plane_id(self, packet: SetPlaneID) -> None:
         with self._lock:
@@ -441,6 +484,7 @@ class UnrealAIPilotUDPClient:
             else:
                 self._last_sent_packet = trace
                 self._tx_counts[message_type.name] += 1
+        self._write_packet_trace(trace)
 
     def _packet_to_fields(self, packet: Any) -> dict[str, Any]:
         if is_dataclass(packet):

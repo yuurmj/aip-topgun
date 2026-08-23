@@ -1,0 +1,2 @@
+{"direction":"TX","message_type":"MT_SimState","timestamp":1787416768.8328347,"size_bytes":5,"endpoint":"127.0.0.1:9999","fields":{"state":1}}
+{"direction":"TX","message_type":"MT_ClientInfo","timestamp":1787416768.8328347,"size_bytes":39,"endpoint":"127.0.0.1:9999","fields":{"team_name":"TEAM_NAME_TO_BE_FILLED","ai_type":"ReinforcementLearning","plane_id":-1}}

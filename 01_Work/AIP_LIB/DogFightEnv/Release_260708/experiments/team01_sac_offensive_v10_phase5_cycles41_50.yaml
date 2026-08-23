@@ -1,0 +1,53 @@
+extends: team01_sac_offensive_v10_phase4_cycles31_40.yaml
+name: team01_sac_offensive_v10_phase5_cycles41_50
+output: {name: team01, tag: sac_offensive_v10_phase5_cycles41_50}
+
+env_config:
+  episode_seed_cycle: [90541, 90542, 90543, 90544, 90545, 90546, 90547, 90548, 90549, 90550, 90551, 90552]
+  ownship_randomization: {enabled: false}
+  initial_scenario:
+    mode: scenario_pool
+    legacy_use_random_scenario: false
+    legacy_use_first_scenario_only: false
+    scenarios:
+      - {name: fire_500_center, weight: 0.10, ownship: [0, 0, -6000, 0, 0, 0, 205], target: [500, 0, -6000, 0, 0, 0, 200], target_mode: behavior_tree}
+      - {name: fire_650_left, weight: 0.075, ownship: [0, -35, -6000, 0, 0, 2, 210], target: [650, 0, -6000, 0, 0, 0, 200], target_mode: behavior_tree}
+      - {name: fire_650_right, weight: 0.075, ownship: [0, 35, -6000, 0, 0, 358, 210], target: [650, 0, -6000, 0, 0, 0, 200], target_mode: behavior_tree}
+      - {name: tail_900_offset, weight: 0.10, ownship: [0, 80, -6200, 0, 0, 357, 215], target: [900, 0, -6200, 0, 0, 0, 205], target_mode: behavior_tree}
+      - {name: quarter_left, weight: 0.10, ownship: [0, 0, -6500, 0, 0, 20, 215], target: [1400, -500, -6450, 0, 0, 330, 205], target_mode: behavior_tree}
+      - {name: quarter_right, weight: 0.10, ownship: [0, 0, -6500, 0, 0, 340, 215], target: [1400, 500, -6550, 0, 0, 30, 205], target_mode: behavior_tree}
+      - {name: postmerge_left, weight: 0.10, ownship: [900, -250, -5500, 0, 0, 165, 220], target: [0, 0, -5500, 0, 0, 180, 205], target_mode: behavior_tree}
+      - {name: postmerge_right, weight: 0.10, ownship: [900, 250, -5500, 0, 0, 195, 220], target: [0, 0, -5500, 0, 0, 180, 205], target_mode: behavior_tree}
+      - {name: viewer_headon_762, weight: 0.25, ownship: [0, 0, -4572, 0, 0, 0, 200], target: [762, 0, -4572, 0, 0, 180, 200], target_mode: behavior_tree}
+  reward:
+    win_reward: 3500.0
+    loss_reward: -3800.0
+    ownship_crash_reward: -3800.0
+    timeout_reward: -700.0
+    draw_reward: -700.0
+    damage_scale: 320.0
+    target_damage_bonus_scale: 500.0
+    ownship_damage_penalty_scale: 420.0
+    mutual_damage_penalty: 30.0
+    angular_advantage_scale: 20.0
+    attack_window_scale: 12.0
+    threat_penalty_scale: 25.0
+    fire_control_scale: 50.0
+    wez_hold_scale: 20.0
+    wez_progress_scale: 130.0
+    wez_milestone_bonus: 500.0
+
+algo:
+  actor_lr: 1.0e-5
+  critic_lr: 1.0e-4
+  alpha_lr: 5.0e-6
+  learning_starts: 512
+  training_intensity: 1.0
+
+runtime:
+  iterations: 10
+  rollout_fragment_length: 1024
+  init_bundle: artifacts/models/team01/sac_offensive_v10_phase4b_cycles31_40/bundle_000010
+
+engagement_log: {enabled: true, interval: 1, steps: 900, episodes: 1, print: true}
+notes: "Feedback cycles 41-50: low-LR balance tuning across kill, re-entry, and Viewer head-on starts."

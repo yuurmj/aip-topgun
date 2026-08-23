@@ -1,7 +1,7 @@
 DogFightViewer/Binaries/Win64/D3D12/x64/D3D12Core.dll	2026-05-10T16:26:51.412Z
 DogFightViewer/Binaries/Win64/D3D12/x64/d3d12SDKLayers.dll	2026-05-10T16:26:51.445Z
 DogFightViewer/Binaries/Win64/DML/x64/DirectML.dll	2026-05-10T16:29:10.939Z
-DogFightViewer/Binaries/Win64/DogFightViewer-Win64-Shipping.exe	2026-08-15T12:32:46.574Z
+DogFightViewer/Binaries/Win64/DogFightViewer-Win64-Shipping.exe	2026-08-20T10:53:15.338Z
 DogFightViewer/Binaries/Win64/tbb12.dll	2026-05-10T16:29:11.141Z
 DogFightViewer/Binaries/Win64/tbbmalloc.dll	2026-05-10T16:29:11.141Z
 Engine/Extras/Redist/en-us/vc_redist.x64.exe	2026-05-10T16:27:58.679Z
@@ -27,7 +27,7 @@ DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/aircraft/f16/READ
 DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/aircraft/f16/Systems/hook.xml	2026-08-15T12:17:35.378Z
 DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/aircraft/f16/Systems/pushback.xml	2026-08-15T12:17:35.379Z
 DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/aircraft/f16/f16.xml	2026-08-15T12:17:35.374Z
-DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/aircraft/f16/f16_init.xml	2026-08-15T12:17:35.375Z
+DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/aircraft/f16/f16_init.xml	2026-08-20T10:51:05.820Z
 DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/aircraft/f16/reset00.xml	2026-08-15T12:17:35.376Z
 DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/aircraft/fa50/INSTALL	2026-08-15T12:17:35.382Z
 DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/aircraft/fa50/README	2026-08-15T12:17:35.383Z
@@ -41,5 +41,5 @@ DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/engine/F100-PW-22
 DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/engine/F404-GE-402.xml	2026-08-15T12:17:35.390Z
 DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/engine/direct.xml	2026-08-15T12:17:35.388Z
 DogFightViewer/Plugins/JSBSimAIP/ThirdParty/JSBSimAIPLib/Win64/engine/engIO470D.xml	2026-08-15T12:17:35.389Z
-Engine/Config/StagedBuild_DogFightViewer.ini	2026-08-15T12:40:35.449Z
-DogFightViewer.exe	2026-08-15T12:40:35.447Z
+Engine/Config/StagedBuild_DogFightViewer.ini	2026-08-20T10:54:15.440Z
+DogFightViewer.exe	2026-08-20T10:54:15.438Z

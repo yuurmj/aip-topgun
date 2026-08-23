@@ -1,0 +1,54 @@
+extends: team01_sac_offensive_v10_phase3_cycles21_30.yaml
+name: team01_sac_offensive_v10_phase4b_cycles31_40
+output: {name: team01, tag: sac_offensive_v10_phase4b_cycles31_40}
+
+env:
+  max_engage_time: 60.0
+  episode_step_limit: 3600
+
+env_config:
+  episode_seed_cycle: [90431, 90432, 90433, 90434, 90435, 90436, 90437, 90438, 90439, 90440, 90441, 90442]
+  initial_scenario:
+    mode: ref_old_random
+    legacy_use_random_scenario: true
+    legacy_use_first_scenario_only: false
+    legacy_scenario_indices: [0, 1, 2, 3, 4, 5, 6, 7]
+    legacy_randomization:
+      aircraft_radius_m: 150.0
+      roll_deg: 10.0
+      pitch_deg: 8.0
+      heading_deg: 10.0
+      shared_n_m: 4000.0
+      shared_e_m: 4000.0
+      shared_d_m: 1000.0
+      target_distance_n_m: 400.0
+      speed_mps: 70.0
+      ownship_speed_advantage_mps: -20.0
+      loiter_bank_deg_range: [30.0, 80.0]
+  reward:
+    timeout_reward: -600.0
+    draw_reward: -600.0
+    damage_scale: 300.0
+    target_damage_bonus_scale: 450.0
+    ownship_damage_penalty_scale: 350.0
+    angular_advantage_scale: 18.0
+    attack_window_scale: 12.0
+    threat_penalty_scale: 20.0
+    fire_control_scale: 45.0
+    wez_hold_scale: 18.0
+    wez_progress_scale: 120.0
+    wez_milestone_bonus: 450.0
+
+algo:
+  actor_lr: 3.0e-5
+  critic_lr: 2.0e-4
+  training_intensity: 2.0
+  learning_starts: 512
+
+runtime:
+  iterations: 10
+  rollout_fragment_length: 1024
+  init_bundle: artifacts/models/team01/sac_offensive_v10_phase3_cycles21_30/bundle_000008
+
+engagement_log: {enabled: true, interval: 1, steps: 900, episodes: 1, print: true}
+notes: "Feedback cycles 31-40: stabilize cycle 28 against stronger randomized guarded BT engagements."

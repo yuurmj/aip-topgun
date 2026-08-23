@@ -23,12 +23,38 @@ class ExperimentError(ValueError):
     """Raised when an experiment YAML is invalid."""
 
 
-def load_experiment(path: Path) -> dict[str, Any]:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge experiment mappings; lists and scalars replace."""
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_experiment(
+    path: Path,
+    _seen: set[Path] | None = None,
+) -> dict[str, Any]:
     if not path.exists():
         raise ExperimentError(f"experiment YAML not found: {path}")
+    resolved = path.resolve()
+    seen = set() if _seen is None else set(_seen)
+    if resolved in seen:
+        chain = " -> ".join(str(item) for item in [*seen, resolved])
+        raise ExperimentError(f"cyclic experiment extends chain: {chain}")
+    seen.add(resolved)
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ExperimentError("experiment YAML root must be a mapping")
+    extends = data.pop("extends", None)
+    if extends:
+        base_path = Path(str(extends))
+        if not base_path.is_absolute():
+            base_path = path.parent / base_path
+        data = _deep_merge(load_experiment(base_path, seen), data)
     return data
 
 
@@ -73,6 +99,7 @@ def build_argv(exp: dict[str, Any], exp_path: Path) -> tuple[Path, list[str]]:
     _add_optional(argv, "--target-entropy", algo, "target_entropy")
     _add_replay_buffer_options(argv, algo)
     _add_optional(argv, "--learning-starts", algo, "learning_starts")
+    _add_optional(argv, "--training-intensity", algo, "training_intensity")
     _add_mlp_model_options(argv, algo)
     _add_network_options(argv, algo)
     _add_lstm_sac_options(argv, algo)
